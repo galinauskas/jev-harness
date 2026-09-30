@@ -1,32 +1,35 @@
-# Code review — 28 September 2026
+# Code review — 30 September 2026
 
-Reviewed the CLI, configuration, routing, HTTP client, streaming parser, agent loop, local tools and terminal interface.
+Reviewed the CLI, configuration, routing, all three provider clients, streaming parsers, agent loop, context compaction, session persistence, local tools and terminal interface. This follows the 28 September review and covers the newly added features.
 
-## Changes
+## Findings and fixes
 
-- Shell timeouts and cancellation terminate the Unix process group, including ordinary child processes. Output-pipe waits are bounded, and child environments omit `OPENROUTER_API_KEY`.
-- Authenticated HTTP requests reject redirects. Streaming requests have a ten-minute deadline; routing has a 45-second deadline. API-key access is synchronised with settings updates.
-- Streams have an 8 MiB total limit and a 3 MiB per-tool argument limit. Incomplete, malformed, duplicate and sparse tool calls are rejected before execution.
-- Aborted tool approvals receive matching history results, allowing subsequent turns to proceed. Cancelled stream consumers drain the terminal event. History accounting includes tool arguments.
-- Filesystem tools reject special files, bound reads and edits, handle malformed directory arguments, and avoid integer overflow in line limits.
-- Configuration reads and writes are limited to 1 MiB. Saves validate configuration before writing, retaining atomic replacement and private permissions.
-- Terminal text is sanitised after decoding JSON and after assembling streamed fragments, closing escape-sequence injection paths.
-- Role changes are blocked during active turns to avoid a data race. Completed turn contexts are released. Paste and cursor events now reach the chat input.
-- Split filesystem and shell execution from tool definitions, and separated chat/settings rendering from their state handling. Consolidated syntax highlighting and removed unused bell code.
-- Changed project-owned spelling to British English, including `sanitise.go` and colour terminology. Third-party identifiers such as `lipgloss.Color`, module paths and protocol headers retain their required spelling.
-- Removed all 13 original test files and four temporary security regression files. Rebuilt the root `jev` executable and tidied dependency declarations.
+- Saved transcripts could replay terminal commands from altered session files. Resumption now preserves only bounded colour and emphasis sequences; clipboard, cursor and other terminal controls are removed.
+- Background context lookups could read agent configuration while settings replaced it. Each lookup now captures its provider client before starting, and replies from an older settings generation are ignored. Context windows and token-estimate calibration are kept separate by provider. Changed or deleted roles refresh the displayed mapping.
+- OpenCode Go's native streams lacked the per-tool argument bound applied to chat completions. A shared validator now enforces complete calls, unique IDs, valid JSON, at most 128 calls and a 3 MiB argument limit across all protocols. Messages fragments are bounded before concatenation. Failed calls never reach approval or execution.
+- Saved native provider history was only shallow-copied. History snapshots and restored sessions now detach native JSON buffers as well as tool-call slices.
+- Configuration and session reads now share a bounded regular-file reader. On Unix it rejects symbolic links and opens without blocking on named pipes before checking the file type. Atomic saves and private permissions remain in place.
+- A stale error status could prevent a successful save-and-quit after an aborted turn. Quitting now depends on the current save result.
+- Repeated routing choices were hidden, including changes between automatic and pinned routing. Every turn now shows its source and provider; a pin is labelled `pinned`, rather than displaying an invented confidence measurement.
+- OpenRouter streams explicitly request usage. Missing routing credentials fail before an HTTP request. Provider keys remain excluded from shell-tool environments, and authenticated requests reject redirects.
+- Split chat commands, event handling and context lookups into separate files. Consolidated private-file reads and stream tool validation. Updated project-owned prose to British spelling while preserving protocol and library identifiers.
+- Refreshed 23 interface images and the routing overview, including providers, command suggestions, sessions, stats, compaction and the yellow approval panel. All decisions, replies, timings and usage in the gallery are illustrative; no live model request or tool execution was used for those captures.
 
 ## Verification
 
-Before deleting the tests, the full suite and temporary regression checks passed with `go test -race ./...`. Targeted checks covered cancellation of shell descendants, credential inheritance, redirected requests, malformed/incomplete tool calls, oversized streams, file bounds, terminal controls, paste handling and resuming after an aborted approval.
+The existing suite passed with `go test -race ./...` before changes. The full suite and targeted regression checks passed again after the fixes and file split. Local HTTP mocks covered direct DeepSeek, all three OpenCode Go protocols, tool/reasoning history replay, provider key changes, cancellation, usage accounting, session resumption and compaction failures. Additional checks covered transcript controls, detached native history, context/settings concurrency, stale metadata replies, oversized native arguments, duplicate calls, named pipes, symlinks and bounded private-file reads.
 
-After removal:
+The rebuilt executable passed isolated CLI and real PTY terminal smoke checks: single-role routing, invalid arguments, startup, settings save, input style change, stats, session browsing, missing-key failure, saved-turn resumption and clean exit. Saved config and session files were verified as 0600. Screenshot generation checked terminal row and width bounds; all 24 PNG files were decoded and verified, with representative captures inspected visually.
+
+As requested in the previous review, test files were removed after verification: 13 existing files, four temporary security/concurrency regression files and one temporary showcase fixture. Verification copies were retained outside the project. Subsequent `go test ./...` checks package compilation only.
+
+Final checks:
 
 - `go build -o jev ./cmd/jev` passed.
 - `go vet ./...`, formatting checks and `go mod verify` passed.
 - `govulncheck` reported no known vulnerabilities.
-- `go test ./...` confirmed package compilation; no test files remain.
-- CLI smoke checks passed for single-role routing, invalid arguments and malformed configuration.
-- Terminal smoke checks passed for startup, opening settings, saving an input preference, returning to chat, bracketed paste and clean exit. Saved configuration permissions were 0600, with a 0700 directory.
+- CLI/TUI smoke checks passed.
 
-Live OpenRouter completions were not exercised; network-flow regression checks used local mock servers. The tools remain approval-controlled local execution, not an OS sandbox: approved shell commands and file operations can access the user's files, and YOLO mode skips individual approval. Process-group cancellation is implemented for Unix; other platforms retain shell cancellation and bounded output-pipe waits.
+Live authenticated provider completions were not exercised. DeepSeek metadata and OpenCode Go endpoint/session requirements were checked against their provider documentation; the Go model limits remain a dated bundled catalog snapshot. This review does not establish measured routing speed, accuracy or production readiness.
+
+**Test purposes only; not recommended for actual coding.** The harness has no operating-system sandbox. Approved tools can access local files and execute commands, and YOLO mode skips approval. Keep trials in a throwaway workspace with separate, limited API keys, then revoke every trial key and create new ones. Saved sessions include conversation and tool output; remove the private session files when discarding a trial. Unix process-group cancellation covers ordinary child processes; platform-specific handling and private-file flags are more limited outside Unix.
