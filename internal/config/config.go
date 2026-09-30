@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"jevharness/internal/privatefile"
 	"math"
 	"os"
 	"path/filepath"
@@ -13,18 +13,22 @@ import (
 	"strings"
 )
 
-// Role maps a Jev criteria name to an OpenRouter model.
+// Role maps a Jev criteria name to a provider and model.
 type Role struct {
-	Name        string `json:"name"`        // ^[a-z0-9_-]{1,32}$, unique; used verbatim as Jev criteria key
-	Model       string `json:"model"`       // OpenRouter model id, must contain "/"
-	Description string `json:"description"` // Jev criteria text: when this role should win
+	Provider    string `json:"provider,omitempty"` // empty means openrouter
+	Name        string `json:"name"`               // ^[a-z0-9_-]{1,32}$, unique; used verbatim as Jev criteria key
+	Model       string `json:"model"`              // provider model id
+	Description string `json:"description"`        // Jev criteria text: when this role should win
 }
 
 // Config is the on-disk application configuration.
 type Config struct {
+	OpenCodeGoAPIKey    string           `json:"opencode_go_api_key,omitempty"`
+	DeepSeekAPIKey      string           `json:"deepseek_api_key,omitempty"`
 	APIKey              string           `json:"api_key,omitempty"`
 	JevModel            string           `json:"jev_model"`                  // default "typesafe/jev-1.13"
 	ConfidenceThreshold float64          `json:"confidence_threshold"`       // default 0.5, range [0,1]
+	CompactionThreshold int              `json:"compaction_threshold"`       // percent of model context; 0 disables
 	ChatInputLines      bool             `json:"chat_input_lines,omitempty"` // show horizontal rules around the chat input
 	StatusLine          StatusLineConfig `json:"status_line"`
 	DefaultRole         string           `json:"default_role"` // must name an existing role
@@ -58,6 +62,7 @@ func Default() Config {
 	return Config{
 		JevModel:            "typesafe/jev-1.13",
 		ConfidenceThreshold: 0.5,
+		CompactionThreshold: 80,
 		DefaultRole:         "basic",
 		Roles: []Role{
 			{
@@ -77,22 +82,14 @@ func Default() Config {
 // Load reads the config file. A missing file returns Default() and no error.
 // A present-but-unreadable or unparseable file returns an error.
 func Load() (Config, error) {
-	f, err := os.Open(Path())
+	data, err := privatefile.Read(Path(), 1<<20)
 	if errors.Is(err, os.ErrNotExist) {
 		return Default(), nil
 	}
 	if err != nil {
 		return Config{}, fmt.Errorf("read config: %w", err)
 	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
-	if err != nil {
-		return Config{}, fmt.Errorf("read config: %w", err)
-	}
-	if len(data) > 1<<20 {
-		return Config{}, errors.New("config exceeds 1 MiB")
-	}
-	var cfg Config
+	cfg := Config{CompactionThreshold: 80}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config %s: %w", Path(), err)
 	}
@@ -167,7 +164,13 @@ func (c Config) Validate() error {
 			errs = append(errs, fmt.Sprintf("duplicate role name %q", r.Name))
 		}
 		seen[r.Name] = true
-		if !strings.Contains(r.Model, "/") {
+		if r.Backend() != "openrouter" && r.Backend() != "deepseek" && r.Backend() != "opencode-go" {
+			errs = append(errs, fmt.Sprintf("role %q has unknown provider %q (use openrouter, deepseek, or opencode-go)", r.Name, r.Provider))
+		}
+		if strings.TrimSpace(r.Model) == "" || strings.HasPrefix(r.Model, "-") {
+			errs = append(errs, fmt.Sprintf("role %q needs a valid model ID", r.Name))
+		}
+		if r.Backend() == "openrouter" && !strings.Contains(r.Model, "/") {
 			errs = append(errs, fmt.Sprintf("role %q model %q must be an OpenRouter id like provider/model", r.Name, r.Model))
 		}
 		if strings.TrimSpace(r.Description) == "" {
@@ -180,6 +183,9 @@ func (c Config) Validate() error {
 	if math.IsNaN(c.ConfidenceThreshold) || math.IsInf(c.ConfidenceThreshold, 0) || c.ConfidenceThreshold < 0 || c.ConfidenceThreshold > 1 {
 		errs = append(errs, "confidence_threshold must be in [0,1]")
 	}
+	if c.CompactionThreshold < 0 || c.CompactionThreshold > 100 {
+		errs = append(errs, "compaction_threshold must be in [0,100] (0 disables)")
+	}
 	if c.JevModel == "" {
 		errs = append(errs, "jev_model is required")
 	}
@@ -189,10 +195,37 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// Key resolves the OpenRouter API key: env first, then config value.
+// Key uses the explicitly saved key, falling back to the environment.
 func (c Config) Key() string {
-	if k := os.Getenv("OPENROUTER_API_KEY"); k != "" {
+	if k := strings.TrimSpace(c.APIKey); k != "" {
 		return k
 	}
-	return c.APIKey
+	return strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
+}
+
+// Backend preserves the OpenRouter default for older role configurations.
+func (r Role) Backend() string {
+	if r.Provider == "" {
+		return "openrouter"
+	}
+	return r.Provider
+}
+
+// ProviderKey resolves each service's credential independently.
+func (c Config) ProviderKey(provider string) string {
+	var saved, env string
+	switch provider {
+	case "openrouter", "":
+		return c.Key()
+	case "deepseek":
+		saved, env = c.DeepSeekAPIKey, "DEEPSEEK_API_KEY"
+	case "opencode-go":
+		saved, env = c.OpenCodeGoAPIKey, "OPENCODE_GO_API_KEY"
+	default:
+		return ""
+	}
+	if key := strings.TrimSpace(saved); key != "" {
+		return key
+	}
+	return strings.TrimSpace(os.Getenv(env))
 }
