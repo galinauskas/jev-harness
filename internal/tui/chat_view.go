@@ -88,7 +88,7 @@ func (c chatModel) approvalView() string {
 }
 
 func (c chatModel) statsLine() string {
-	items := []string{dimStyle.Render(c.ag.Mode() + " · staged")}
+	var items []string
 	if !c.cfg.StatusLine.HideModel {
 		if c.ag.Pinned != "" {
 			if role, ok := c.cfg.RoleByName(c.ag.Pinned); ok {
@@ -124,7 +124,7 @@ func (c chatModel) statsLine() string {
 		}
 	}
 	if !c.cfg.StatusLine.HideCost {
-		cost := fmt.Sprintf("reported $%.3f", c.cost)
+		cost := fmt.Sprintf("$%.3f", c.cost)
 		if c.cost > 0 && c.cost < 0.001 {
 			cost = fmt.Sprintf("$%.4f", c.cost)
 		}
