@@ -137,3 +137,22 @@ func (r *Router) Route(ctx context.Context, state State) Decision {
 	}
 	return withUsage(Decision{Role: role, Source: SourceJev, Confidence: conf, Probabilities: ans.Probabilities})
 }
+
+// RouteProject excludes forbidden providers before classification and fallback.
+func (r *Router) RouteProject(ctx context.Context, cwd string, state State) Decision {
+	cfg := r.cfg
+	cfg.ApplyDefaults()
+	cfg.Roles = nil
+	for _, role := range r.cfg.Roles {
+		if cfg.ProviderAllowed(cwd, role.Backend()) {
+			cfg.Roles = append(cfg.Roles, role)
+		}
+	}
+	if len(cfg.Roles) == 0 {
+		return Decision{Source: SourceError, Err: errors.New("no provider permitted by project policy")}
+	}
+	if len(cfg.Roles) > 1 && !cfg.ProviderAllowed(cwd, "openrouter") {
+		return Decision{Source: SourceError, Err: errors.New("automatic classification requires OpenRouter; pin a permitted role")}
+	}
+	return New(r.client, cfg).Route(ctx, state)
+}
