@@ -100,7 +100,10 @@ func (r *Router) Route(ctx context.Context, state State) Decision {
 	if err != nil {
 		return fallback(SourceError, 0, nil, err)
 	}
-	usage := &openrouter.Usage{PromptTokens: resp.Usage.InputTokens, TotalTokens: resp.Usage.InputTokens, Cost: resp.Usage.Cost}
+	usage := &openrouter.Usage{PromptTokens: resp.Usage.InputTokens, TotalTokens: resp.Usage.InputTokens, CostKnown: resp.Usage.Cost != nil}
+	if resp.Usage.Cost != nil {
+		usage.Cost = *resp.Usage.Cost
+	}
 	withUsage := func(d Decision) Decision {
 		d.Usage, d.Model = usage, resp.Model
 		if d.Model == "" {

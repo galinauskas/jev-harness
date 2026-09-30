@@ -7,6 +7,8 @@ import (
 
 // Message is a chat-completions message.
 type Message struct {
+	Provider         string            `json:"provider,omitempty"`
+	Model            string            `json:"model,omitempty"`
 	NativeProvider   string            `json:"native_provider,omitempty"`
 	NativeItems      []json.RawMessage `json:"native_items,omitempty"`
 	ReasoningContent string            `json:"reasoning_content,omitempty"`
@@ -38,6 +40,7 @@ type ToolDef struct {
 
 // Usage is token accounting from the final stream chunk.
 type Usage struct {
+	CostKnown        bool    `json:"cost_known,omitempty"`
 	PromptTokens     int     `json:"prompt_tokens"`
 	CompletionTokens int     `json:"completion_tokens"`
 	TotalTokens      int     `json:"total_tokens"`
@@ -99,8 +102,8 @@ type DecisionsResponse struct {
 	Model   string                  `json:"model"`
 	Answers map[string]ChoiceAnswer `json:"answers"`
 	Usage   struct {
-		InputTokens int     `json:"input_tokens"`
-		Cost        float64 `json:"cost"`
+		InputTokens int      `json:"input_tokens"`
+		Cost        *float64 `json:"cost"`
 	} `json:"usage"`
 }
 
@@ -138,4 +141,20 @@ type StreamOptions struct {
 }
 type ThinkingOptions struct {
 	Type string `json:"type"`
+}
+
+func (u *Usage) UnmarshalJSON(data []byte) error {
+	type alias Usage
+	var v alias
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*u = Usage(v)
+	cost, ok := fields["cost"]
+	u.CostKnown = ok && string(cost) != "null"
+	return nil
 }

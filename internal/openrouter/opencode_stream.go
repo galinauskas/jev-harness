@@ -12,11 +12,11 @@ import (
 )
 
 type goUsage struct {
-	Input      *int    `json:"input_tokens"`
-	Output     *int    `json:"output_tokens"`
-	CacheRead  int     `json:"cache_read_input_tokens"`
-	CacheWrite int     `json:"cache_creation_input_tokens"`
-	Cost       float64 `json:"cost"`
+	Input      *int     `json:"input_tokens"`
+	Output     *int     `json:"output_tokens"`
+	CacheRead  int      `json:"cache_read_input_tokens"`
+	CacheWrite int      `json:"cache_creation_input_tokens"`
+	Cost       *float64 `json:"cost"`
 }
 
 type goBlock struct {
@@ -75,7 +75,10 @@ func readGoStream(ctx context.Context, body io.ReadCloser, started time.Time, pr
 			usage.CompletionTokens = *u.Output
 		}
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-		usage.Cost = u.Cost
+		if u.Cost != nil {
+			usage.Cost = *u.Cost
+			usage.CostKnown = true
+		}
 	}
 	dispatch := func(data string) error {
 		if data == "[DONE]" {
