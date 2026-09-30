@@ -7,7 +7,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"jevharness/internal/router"
-	"jevharness/internal/session"
 )
 
 // saveSession reads agent state only while idle, after channel closure has
@@ -19,12 +18,10 @@ func (c *chatModel) saveSession() bool {
 	if c.sessionID == "" {
 		return true
 	}
-	v := session.Session{
-		ID: c.sessionID, Title: c.sessionTitle, CWD: c.cwd, Updated: c.sessionUpdated,
-		Messages: c.ag.History(), Transcript: c.transcript.String(), Pinned: c.ag.Pinned,
-		TokensIn: c.tokensIn, TokensOut: c.tokensOut, Cost: c.cost, Turns: c.turns,
-		ContextUsed: c.contextUsed, ContextModel: c.contextModel, Models: c.models,
+	if c.cfg.Safety.Ephemeral {
+		return true
 	}
+	v := c.snapshot()
 	if c.lastDec != nil {
 		v.LastRole = c.lastDec.Role
 	}
@@ -55,6 +52,10 @@ func (c chatModel) newSession() (chatModel, tea.Cmd) {
 		return c, nil
 	}
 	c.ag.Clear()
+	c.yolo = false
+	c.reviewed = ""
+	c.recovery = false
+	c.followups = nil
 	c.sessionID, c.sessionTitle = "", ""
 	c.sessionPicker, c.sessionList = false, nil
 	c.transcript.Reset()
@@ -96,9 +97,23 @@ func (c chatModel) sessionKey(m tea.KeyPressMsg) (chatModel, tea.Cmd) {
 		}
 		c.ag.Restore(v.Messages, v.Pinned)
 		c.ag.SetSessionID(v.ID)
+		c.ag.ResetPermissions()
+		c.yolo = false
+		c.reviewed = ""
+		c.recovery = v.Running || v.PendingTool != ""
+		c.ag.SetPersistence(v)
 		c.sessionID, c.sessionTitle, c.sessionUpdated = v.ID, v.Title, v.Updated
 		c.transcript.Reset()
-		c.transcript.WriteString(safeTranscript(v.Transcript))
+		if v.Transcript != "" {
+			c.transcript.WriteString(safeTranscript(v.Transcript))
+		} else {
+			for _, m := range v.Messages {
+				c.transcript.WriteString(safeText(m.Role+": "+m.Content) + "\n")
+			}
+		}
+		if c.recovery {
+			c.transcript.WriteString("Interrupted session: inspect /changes and acknowledge with /recover. Pending tools will not be replayed.\n")
+		}
 		c.pending.Reset()
 		c.lastDec = nil
 		if v.LastRole.Model != "" {

@@ -9,6 +9,9 @@ import (
 
 // slash handles commands before submit. Returns the model and cmd.
 func (c chatModel) slash(text string) (chatModel, tea.Cmd) {
+	if next, cmd, handled := c.safetyCommand(text); handled {
+		return next, cmd
+	}
 	parts := strings.Fields(text)
 	switch parts[0] {
 	case "/settings":

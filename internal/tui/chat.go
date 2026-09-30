@@ -79,6 +79,9 @@ type chatModel struct {
 	sessionCursor     int
 	commandCursor     int
 	commandDismissed  bool
+	reviewed          string
+	recovery          bool
+	followups         []string
 	quitting          bool
 	w, h              int
 }
@@ -180,7 +183,7 @@ func (c *chatModel) refreshVP() {
 		w = 80
 	}
 	atBottom := c.vp.AtBottom()
-	c.vp.SetContent(chatBanner(w) + c.transcript.String() + padText(safeText(c.pending.String()), w))
+	c.vp.SetContent(chatBanner(w) + c.transcript.String() + padText(mdHighlight(c.pending.String()), w))
 	if atBottom {
 		c.vp.GotoBottom()
 	}
@@ -203,8 +206,16 @@ func (c chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 			updated.resize(updated.w, updated.h)
 		}
 		return updated, cmd
+	case diagnosticMsg:
+		c.status = m.Text
+		c.statusIsErr = m.Err != nil
+		if m.Err != nil {
+			c.status = m.Err.Error()
+		}
+		return c, nil
 	case chanClosedMsg:
 		c.events = nil
+		c.recovery = c.recovery || c.ag.PendingTool() != ""
 		if c.cancel != nil {
 			c.cancel()
 		}
@@ -219,6 +230,13 @@ func (c chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 				return c, nil
 			}
 			return c, tea.Quit
+		}
+		c.followups = append(c.followups, c.ag.TakeFollowups()...)
+		if len(c.followups) > 0 {
+			next := c.followups[0]
+			c.followups = c.followups[1:]
+			c.ta.SetValue(next)
+			return c.submit()
 		}
 		return c, nil
 	case tickMsg:
@@ -265,10 +283,7 @@ func (c chatModel) handleKey(m tea.KeyPressMsg) (chatModel, tea.Cmd) {
 	if c.approval != nil {
 		switch m.String() {
 		case "ctrl+c":
-			if c.cancel != nil {
-				c.cancel()
-			}
-			return c, tea.Quit
+			return c.quit()
 		case "esc":
 			if c.cancel != nil {
 				c.cancel()
@@ -320,10 +335,7 @@ func (c chatModel) handleKey(m tea.KeyPressMsg) (chatModel, tea.Cmd) {
 	}
 	switch m.String() {
 	case "ctrl+c":
-		if c.cancel != nil {
-			c.cancel()
-		}
-		return c, tea.Quit
+		return c.quit()
 	case "esc":
 		if c.running() && c.cancel != nil {
 			c.cancel()
@@ -335,8 +347,27 @@ func (c chatModel) handleKey(m tea.KeyPressMsg) (chatModel, tea.Cmd) {
 		if !c.running() {
 			return c.submit()
 		}
+		text := strings.TrimSpace(c.ta.Value())
+		if text != "" {
+			if c.ag.Steer(text, false) {
+				c.ta.Reset()
+				c.status = "Steering queued for the next model request"
+			} else {
+				c.status = "Steering queue is full"
+			}
+		}
 		return c, nil
-	case "shift+enter", "alt+enter":
+	case "alt+enter":
+		if c.running() {
+			text := strings.TrimSpace(c.ta.Value())
+			if text != "" && c.ag.Steer(text, true) {
+				c.ta.Reset()
+				c.status = "Follow-up queued"
+			}
+			return c, nil
+		}
+		fallthrough
+	case "shift+enter":
 		oldHeight := c.ta.Height()
 		c.ta.InsertString("\n")
 		c.syncInputHeight(oldHeight)
@@ -407,6 +438,11 @@ func (c chatModel) submit() (chatModel, tea.Cmd) {
 	c.status = ""
 	c.statusIsErr = false
 
+	if c.recovery && !strings.HasPrefix(text, "/") {
+		c.status, c.statusIsErr = "Interrupted work requires /changes and /recover before continuing", true
+		c.ta.SetValue(text)
+		return c, nil
+	}
 	if strings.HasPrefix(text, "/") {
 		return c.slash(text)
 	}
@@ -421,6 +457,19 @@ func (c chatModel) submit() (chatModel, tea.Cmd) {
 	}
 	c.ag.SetSessionID(c.sessionID)
 	c.sessionUpdated = time.Now()
+	for _, token := range strings.Fields(text) {
+		if strings.HasPrefix(token, "@") && len(token) > 1 {
+			attachment, err := c.ag.Attach(strings.TrimPrefix(token, "@"))
+			if err != nil {
+				c.status, c.statusIsErr = err.Error(), true
+				c.ta.SetValue(text)
+				return c, nil
+			}
+			text += "\n\n" + attachment
+		}
+	}
+	c.ag.SetPersistence(c.snapshot())
+	c.reviewed = ""
 
 	c.appendTranscript("\n" + c.userBlock(text) + "\n\n")
 	ctx, cancel := context.WithCancel(context.Background())

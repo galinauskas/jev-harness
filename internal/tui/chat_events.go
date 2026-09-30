@@ -15,7 +15,7 @@ func (c chatModel) handleEvent(ev agent.Event) (chatModel, tea.Cmd) {
 		if c.models == nil {
 			c.models = make(map[string]session.ModelUsage)
 		}
-		if model := ev.Decision.Role.Model; model != "" {
+		if model := ev.Decision.Role.Backend() + ":" + ev.Decision.Role.Model; model != "" {
 			if _, ok := c.models[model]; !ok {
 				c.models[model] = session.ModelUsage{}
 			}
@@ -35,14 +35,14 @@ func (c chatModel) handleEvent(ev agent.Event) (chatModel, tea.Cmd) {
 		c.appendTranscript("\n" + padText(warnStyle.Render(safeText(ev.Text)), c.w) + "\n")
 	case agent.TextDelta:
 		c.pending.WriteString(ev.Text)
+	case agent.ToolOutput:
+		c.status = truncateRunes(safeText(ev.Text), 120)
+		c.appendTranscript(dimStyle.Render(safeText(ev.Text)))
 	case agent.ToolCall:
 		c.flushPending()
 		// hold the header; the box is rendered when the result arrives
 		c.pendingTool = toolHeader(safeText(ev.ToolName), truncateRunes(safeText(ev.ToolArgs), 300))
-		if c.yolo && ev.Approve != nil {
-			ev.Approve <- true
-			break
-		}
+
 		c.approval = ev.Approve
 		c.approveText = ansi.Strip(toolHeader(safeText(ev.ToolName), safeText(ev.ToolArgs)))
 		if c.approval != nil {

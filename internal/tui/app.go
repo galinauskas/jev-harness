@@ -31,6 +31,18 @@ var (
 
 // openSettingsMsg asks the root model to switch to settings.
 type openSettingsMsg struct{}
+type ShutdownMsg struct{}
+
+func (a *App) Stop() {
+	if a.chat.cancel != nil {
+		a.chat.cancel()
+	}
+	if a.chat.events != nil {
+		for range a.chat.events {
+		}
+		a.chat.events = nil
+	}
+}
 
 // App is the root model. It owns the config and routes messages to the
 // active screen.
@@ -67,6 +79,10 @@ func (a *App) Init() tea.Cmd { return a.chat.requestContext() }
 // Update implements tea.Model.
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
+	case ShutdownMsg:
+		var cmd tea.Cmd
+		a.chat, cmd = a.chat.quit()
+		return a, cmd
 	case tea.WindowSizeMsg:
 		a.w, a.h = m.Width, m.Height
 		a.chat.resize(m.Width, m.Height)
@@ -77,6 +93,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.chat.status = "finish or abort the current turn before opening settings"
 			return a, nil
 		}
+		a.cfg = a.agent.Config()
 		a.mode = modeSettings
 		a.settings = newSettings(a.agent, a.cfg, a.w, a.h)
 		return a, nil

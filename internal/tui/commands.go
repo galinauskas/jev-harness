@@ -13,6 +13,18 @@ type commandSuggestion struct {
 }
 
 var slashCommands = []commandSuggestion{
+	{"/fork", "Fork the conversation and staged files into a new session"},
+	{"/mode", "inspect, develop or autonomous; original files change only with /apply"},
+	{"/changes", "Review staged file changes"},
+	{"/apply", "Apply reviewed changes; optional path"},
+	{"/undo", "Restore an applied file without overwriting later edits"},
+	{"/discard", "Discard staged changes and refresh from project"},
+	{"/attach", "Attach a workspace file to your draft"},
+	{"/compact", "Summarise context now"},
+	{"/recover", "Acknowledge an interrupted session after review"},
+	{"/providers", "View or set permitted providers for this project"},
+	{"/name", "Rename the current session"},
+	{"/doctor", "Check sandbox availability"},
 	{"/settings", "Edit configuration"},
 	{"/session", "Open saved sessions; /session new starts a new one"},
 	{"/stats", "Show session tokens, cost, models, and context usage"},

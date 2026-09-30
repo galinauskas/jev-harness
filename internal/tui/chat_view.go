@@ -88,7 +88,7 @@ func (c chatModel) approvalView() string {
 }
 
 func (c chatModel) statsLine() string {
-	var items []string
+	items := []string{dimStyle.Render(c.ag.Mode() + " · staged")}
 	if !c.cfg.StatusLine.HideModel {
 		if c.ag.Pinned != "" {
 			if role, ok := c.cfg.RoleByName(c.ag.Pinned); ok {
@@ -124,15 +124,15 @@ func (c chatModel) statsLine() string {
 		}
 	}
 	if !c.cfg.StatusLine.HideCost {
-		cost := fmt.Sprintf("$%.3f", c.cost)
+		cost := fmt.Sprintf("reported $%.3f", c.cost)
 		if c.cost > 0 && c.cost < 0.001 {
 			cost = fmt.Sprintf("$%.4f", c.cost)
 		}
 		items = append(items, dimStyle.Render(cost))
 	}
 	left := strings.Join(items, dimStyle.Render(" | "))
-	if c.yolo {
-		badge := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(lipgloss.Color("196")).Render(" YOLO ")
+	if c.ag.Mode() == "autonomous" {
+		badge := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(lipgloss.Color("196")).Render(" AUTONOMOUS ")
 		if left == "" {
 			left = badge
 		} else {
