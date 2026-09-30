@@ -5,202 +5,155 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
+
+	"jevharness/internal/workspace"
 )
 
-func runReadFile(dir string, _ context.Context, args json.RawMessage) (string, error) {
-	var p struct {
-		Path   string `json:"path"`
-		Offset int    `json:"offset"`
-		Limit  int    `json:"limit"`
-	}
+type fileArgs struct {
+	Path     string  `json:"path"`
+	Content  *string `json:"content"`
+	Old      string  `json:"old_string"`
+	New      *string `json:"new_string"`
+	Offset   int     `json:"offset"`
+	Limit    int     `json:"limit"`
+	Expected string  `json:"expected_sha256"`
+}
+
+func parseFile(dir string, args json.RawMessage) (*os.Root, fileArgs, error) {
+	var p fileArgs
 	if err := json.Unmarshal(args, &p); err != nil {
-		return "", err
+		return nil, p, err
 	}
-	f, err := openRegular(resolve(dir, p.Path))
+	path, err := workspace.Relative(p.Path)
+	if err != nil {
+		return nil, p, err
+	}
+	p.Path = path
+	root, err := os.OpenRoot(dir)
+	return root, p, err
+}
+func runReadFile(dir string, _ context.Context, args json.RawMessage) (string, error) {
+	root, p, err := parseFile(dir, args)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, (2<<20)+1))
+	defer root.Close()
+	f, err := workspace.Read(root, p.Path)
 	if err != nil {
 		return "", err
 	}
-	fileTruncated := len(data) > 2<<20
-	if fileTruncated {
-		data = data[:2<<20]
-	}
-	lines := strings.Split(string(data), "\n")
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
-	start := 0
-	if p.Offset > 1 {
-		start = p.Offset - 1
-	}
-	if start > len(lines) {
-		start = len(lines)
-	}
+	lines := strings.Split(string(f.Data), "\n")
+	start := max(0, p.Offset-1)
+	start = min(start, len(lines))
 	end := len(lines)
-	if p.Limit > 0 && p.Limit < end-start {
-		end = start + p.Limit
+	if p.Limit > 0 {
+		end = min(end, start+p.Limit)
 	}
 	var b strings.Builder
+	fmt.Fprintf(&b, "sha256: %s\n", workspace.Hash(f))
 	for i := start; i < end; i++ {
 		fmt.Fprintf(&b, "%d│%s\n", i+1, lines[i])
 	}
 	if end < len(lines) {
 		fmt.Fprintf(&b, "[%d more lines]", len(lines)-end)
 	}
-	if fileTruncated {
-		b.WriteString("\n[file exceeds 2 MiB; read is limited to its first 2 MiB]")
-	}
 	return b.String(), nil
 }
-
-func runWriteFile(dir string, _ context.Context, args json.RawMessage) (string, error) {
-	var p struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
-	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", err
-	}
-	if p.Path == "" {
-		return "", errors.New("path is required")
-	}
-	if len(p.Content) > 2<<20 {
-		return "", errors.New("content exceeds 2 MiB")
-	}
-	full := resolve(dir, p.Path)
-	if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
-		return "", err
-	}
-	if err := writeRegular(full, []byte(p.Content)); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("wrote %d bytes", len(p.Content)), nil
-}
-
-func runEditFile(dir string, _ context.Context, args json.RawMessage) (string, error) {
-	var p struct {
-		Path string `json:"path"`
-		Old  string `json:"old_string"`
-		New  string `json:"new_string"`
-	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", err
-	}
-	if p.Path == "" || p.Old == "" {
-		return "", errors.New("path and old_string are required")
-	}
-	full := resolve(dir, p.Path)
-	info, err := os.Stat(full)
+func candidate(dir string, args json.RawMessage, edit bool) (workspace.Change, string, error) {
+	root, p, err := parseFile(dir, args)
 	if err != nil {
-		return "", err
+		return workspace.Change{}, "", err
 	}
-	if !info.Mode().IsRegular() {
-		return "", errors.New("path must be a regular file")
+	defer root.Close()
+	if p.Path == "." {
+		return workspace.Change{}, "", errors.New("file path is required")
 	}
-	if info.Size() > 2<<20 {
-		return "", errors.New("file exceeds 2 MiB edit limit")
-	}
-	f, err := openRegular(full)
+	before, err := workspace.Current(root, p.Path)
 	if err != nil {
-		return "", err
+		return workspace.Change{}, "", err
 	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, (2<<20)+1))
-	if err != nil {
-		return "", err
+	expected := workspace.Hash(before)
+	if p.Expected != "" && p.Expected != expected {
+		return workspace.Change{}, "", errors.New("file changed since it was inspected")
 	}
-	if len(data) > 2<<20 {
-		return "", errors.New("file exceeds 2 MiB edit limit")
+	var data []byte
+	mode := os.FileMode(0644)
+	if before != nil {
+		mode = before.Mode
 	}
-	n := strings.Count(string(data), p.Old)
-	switch {
-	case n == 0:
-		return "", fmt.Errorf("old_string not found")
-	case n > 1:
-		return "", fmt.Errorf("old_string matches %d times; include more context", n)
-	}
-	if len(data)-len(p.Old)+len(p.New) > 2<<20 {
-		return "", errors.New("edited content exceeds 2 MiB")
-	}
-	out := strings.Replace(string(data), p.Old, p.New, 1)
-	if err := writeRegular(full, []byte(out)); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("edited %s", p.Path), nil
-}
-
-func runListDir(dir string, _ context.Context, args json.RawMessage) (string, error) {
-	var p struct {
-		Path string `json:"path"`
-	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", err
-	}
-	full := p.Path
-	if full == "" {
-		full = "."
-	}
-	ents, err := os.ReadDir(resolve(dir, full))
-	if err != nil {
-		return "", err
-	}
-	names := make([]string, 0, len(ents))
-	for _, e := range ents {
-		n := e.Name()
-		if e.IsDir() {
-			n += "/"
+	if edit {
+		if before == nil || p.Old == "" || p.New == nil {
+			return workspace.Change{}, "", errors.New("existing path, old_string and new_string are required")
 		}
-		names = append(names, n)
+		if n := strings.Count(string(before.Data), p.Old); n != 1 {
+			return workspace.Change{}, "", fmt.Errorf("old_string must match exactly once (matched %d)", n)
+		}
+		data = []byte(strings.Replace(string(before.Data), p.Old, *p.New, 1))
+	} else {
+		if p.Content == nil {
+			return workspace.Change{}, "", errors.New("content is required")
+		}
+		data = []byte(*p.Content)
 	}
-	sort.Strings(names)
-	return strings.Join(names, "\n"), nil
+	if len(data) > workspace.MaxFile {
+		return workspace.Change{}, "", errors.New("content exceeds 2 MiB")
+	}
+	return workspace.Change{Path: p.Path, Before: before, After: &workspace.File{Data: data, Mode: mode}}, expected, nil
 }
-
-// openRegular rejects devices, directories and FIFOs without blocking on open.
-func openRegular(path string) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|nonblockFlag, 0)
-	if err != nil {
-		return nil, err
-	}
-	info, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		f.Close()
-		return nil, errors.New("path must be a regular file")
-	}
-	return f, nil
+func runWriteFile(dir string, _ context.Context, args json.RawMessage) (string, error) {
+	return mutate(dir, args, false)
 }
-
-func writeRegular(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|nonblockFlag, 0644)
+func runEditFile(dir string, _ context.Context, args json.RawMessage) (string, error) {
+	return mutate(dir, args, true)
+}
+func mutate(dir string, args json.RawMessage, edit bool) (string, error) {
+	c, hash, err := candidate(dir, args, edit)
 	if err != nil {
-		return err
+		return "", err
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	if err = workspace.AtomicWrite(root, c.Path, c.After.Data, c.After.Mode, hash); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("staged %s (%d bytes); original project unchanged until /apply", c.Path, len(c.After.Data)), nil
+}
+func runListDir(dir string, _ context.Context, args json.RawMessage) (string, error) {
+	root, p, err := parseFile(dir, args)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	if err = workspace.NoLinks(root, p.Path); err != nil {
+		return "", err
+	}
+	f, err := root.Open(p.Path)
+	if err != nil {
+		return "", err
 	}
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return err
+	ents, err := f.ReadDir(10001)
+	if err != nil && len(ents) == 0 {
+		return "", err
 	}
-	if !info.Mode().IsRegular() {
-		return errors.New("path must be a regular file")
+	if len(ents) > 10000 {
+		return "", errors.New("directory exceeds 10,000 entries")
 	}
-	if err := f.Truncate(0); err != nil {
-		return err
+	var b strings.Builder
+	for _, e := range ents {
+		if workspace.Protected(e.Name()) || e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		name := e.Name()
+		if e.IsDir() {
+			name += "/"
+		}
+		b.WriteString(name + "\n")
 	}
-	if _, err := f.Write(data); err != nil {
-		return err
-	}
-	return f.Close()
+	return b.String(), nil
 }

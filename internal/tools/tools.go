@@ -1,11 +1,10 @@
-// Package tools provides the local file/shell tools exposed to the model.
+// Package tools provides workspace tools and optional web search exposed to the model.
 package tools
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 
 	"jevharness/internal/openrouter"
 )
@@ -21,8 +20,8 @@ type Tool struct {
 }
 
 // All returns defs and executors for every tool. Paths resolve relative to
-// dir; absolute paths pass through.
-func All(dir string) []Tool {
+// dir, inside an already scoped staged workspace.
+func All(dir string, webSearch ...*Exa) []Tool {
 	mk := func(name, desc string, params json.RawMessage,
 		run func(dir string, ctx context.Context, args json.RawMessage) (string, error)) Tool {
 		var def openrouter.ToolDef
@@ -41,13 +40,17 @@ func All(dir string) []Tool {
 			},
 		}
 	}
-	return []Tool{
+	result := []Tool{
+		mk("read_command_output", "Read a saved command log in bounded slices. Use the ID returned by bash; offset is a zero-based byte offset, limit defaults to 2000 bytes (max 4000).", json.RawMessage(`{"type":"object","properties":{"id":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["id"]}`), func(_ string, _ context.Context, _ json.RawMessage) (string, error) {
+			return "", fmt.Errorf("command logs require the session Executor")
+		}),
+		mk("search_files", "Find workspace files by glob or search literal text; limited to 100 matches.", json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},"glob":{"type":"string"}}}`), runSearch),
 		mk("read_file",
 			"Read a file. Returns lines prefixed with line numbers (N|). Use offset/limit for large files.",
 			json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"path":   {"type": "string", "description": "file path, relative to cwd or absolute"},
+					"path":   {"type": "string", "description": "file path, relative to the staged workspace; absolute paths are denied"},
 					"offset": {"type": "integer", "description": "1-based first line to return"},
 					"limit":  {"type": "integer", "description": "max lines to return"}
 				},
@@ -59,7 +62,8 @@ func All(dir string) []Tool {
 				"type": "object",
 				"properties": {
 					"path":    {"type": "string"},
-					"content": {"type": "string"}
+					"content": {"type": "string"},
+ "expected_sha256": {"type":"string","description":"Hash returned by read_file, or missing for a new file"}
 				},
 				"required": ["path", "content"]
 			}`), runWriteFile),
@@ -70,7 +74,8 @@ func All(dir string) []Tool {
 				"properties": {
 					"path":       {"type": "string"},
 					"old_string": {"type": "string"},
-					"new_string": {"type": "string"}
+					"new_string": {"type": "string"},
+ "expected_sha256": {"type":"string","description":"Hash returned by read_file"}
 				},
 				"required": ["path", "old_string", "new_string"]
 			}`), runEditFile),
@@ -83,7 +88,7 @@ func All(dir string) []Tool {
 				}
 			}`), runListDir),
 		mk("bash",
-			"Run a shell command (sh -c) in the working directory. Returns combined stdout+stderr.",
+			"Run sh -c in the staged workspace using the configured shell backend. Local execution has normal host and network access; the optional experimental Docker sandbox is offline. Use relative paths for project changes.",
 			json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -93,23 +98,22 @@ func All(dir string) []Tool {
 				"required": ["command"]
 			}`), runBash),
 	}
+	for _, search := range webSearch {
+		if search != nil {
+			result = append(result, search.tool())
+		}
+	}
+	return result
 }
 
 // Find returns the named tool among All(dir).
-func Find(dir, name string) (Tool, bool) {
-	for _, t := range All(dir) {
+func Find(dir, name string, webSearch ...*Exa) (Tool, bool) {
+	for _, t := range All(dir, webSearch...) {
 		if t.Def.Function.Name == name {
 			return t, true
 		}
 	}
 	return Tool{}, false
-}
-
-func resolve(dir, path string) string {
-	if filepath.IsAbs(path) {
-		return path
-	}
-	return filepath.Join(dir, path)
 }
 
 func truncate(s string) string {
