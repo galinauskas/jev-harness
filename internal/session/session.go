@@ -20,13 +20,18 @@ const maxSize = 32 << 20
 
 // ModelUsage stores reported usage across routing, chat, and compaction requests.
 type ModelUsage struct {
-	Requests  int     `json:"requests"`
-	TokensIn  int     `json:"tokens_in"`
-	TokensOut int     `json:"tokens_out"`
-	Cost      float64 `json:"cost"`
+	UnknownCost int     `json:"unknown_cost_requests,omitempty"`
+	Requests    int     `json:"requests"`
+	TokensIn    int     `json:"tokens_in"`
+	TokensOut   int     `json:"tokens_out"`
+	Cost        float64 `json:"cost"`
 }
 
 type Session struct {
+	Version      int                   `json:"version,omitempty"`
+	Running      bool                  `json:"running,omitempty"`
+	PendingTool  string                `json:"pending_tool,omitempty"`
+	Mode         string                `json:"mode,omitempty"`
 	Models       map[string]ModelUsage `json:"models,omitempty"`
 	ID           string                `json:"id"`
 	Title        string                `json:"title"`
@@ -140,7 +145,7 @@ func (s Store) List(cwd string) ([]Session, error) {
 		}
 		v, err := s.Load(id)
 		if err != nil {
-			return nil, fmt.Errorf("load session %s: %w", id, err)
+			continue // One corrupt session must not hide every healthy session.
 		}
 		if v.CWD == cwd {
 			v.Messages = nil
