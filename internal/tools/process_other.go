@@ -6,5 +6,5 @@ import "os/exec"
 
 const nonblockFlag = 0
 
-// CommandContext cancels the shell; WaitDelay bounds inherited output pipes.
+// configureProcess leaves CommandContext to cancel the process; WaitDelay bounds inherited output pipes.
 func configureProcess(cmd *exec.Cmd) {}

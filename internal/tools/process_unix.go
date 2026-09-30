@@ -10,7 +10,7 @@ import (
 
 const nonblockFlag = syscall.O_NONBLOCK
 
-// Cancel the process group so ordinary shell children cannot outlive a timeout.
+// configureProcess cancels the process group so ordinary shell children cannot outlive a timeout.
 func configureProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {

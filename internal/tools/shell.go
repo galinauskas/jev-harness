@@ -35,7 +35,7 @@ func runBash(dir string, ctx context.Context, args json.RawMessage) (string, err
 	// Keep the harness credential out of child process environments.
 	cmd.Env = make([]string, 0)
 	for _, entry := range os.Environ() {
-		if !strings.HasPrefix(entry, "OPENROUTER_API_KEY=") {
+		if !strings.HasPrefix(entry, "OPENROUTER_API_KEY=") && !strings.HasPrefix(entry, "DEEPSEEK_API_KEY=") && !strings.HasPrefix(entry, "OPENCODE_GO_API_KEY=") {
 			cmd.Env = append(cmd.Env, entry)
 		}
 	}
