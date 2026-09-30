@@ -1,281 +1,297 @@
 package tui
 
 import (
-	"charm.land/lipgloss/v2"
 	"fmt"
-	"github.com/charmbracelet/x/ansi"
 	"os"
 	"strings"
+
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
-// ---- view ----
+var settingsSelected = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("31")).Bold(true)
+var settingsTabs = []string{"Appearance", "Routing", "Context", "Providers", "Roles"}
+
+type settingRow struct{ section, label, value, hint, action string }
+
+func (s settingsModel) rows() []settingRow {
+	switch s.tab {
+	case settingsRouting:
+		return []settingRow{
+			{"Model", "Routing model", settingsText(s.cfg.JevModel), "Model Jev uses to choose a role for each request.", "model"},
+			{"Fallback", "Confidence threshold", fmt.Sprintf("%g", s.cfg.ConfidenceThreshold), "Use the default role below this confidence. Enter a number from 0 to 1.", "threshold"},
+			{"Fallback", "Default role", settingsText(s.cfg.DefaultRole), "Role used when routing confidence is below the threshold. Enter to choose.", "default"},
+		}
+	case settingsContext:
+		return []settingRow{{"Compaction", "Compaction threshold", s.compactionLabel(), "Summarise earlier context at this percentage; 0 disables compaction.", "c"}}
+	case settingsProviders:
+		return []settingRow{
+			{"API keys", "OpenRouter API key", keyStatus(s.cfg.APIKey, "OPENROUTER_API_KEY"), "Saved key overrides OPENROUTER_API_KEY. Leave blank to use the environment key.", "key0"},
+			{"API keys", "DeepSeek API key", keyStatus(s.cfg.DeepSeekAPIKey, "DEEPSEEK_API_KEY"), "Saved key overrides DEEPSEEK_API_KEY. Leave blank to use the environment key.", "key1"},
+			{"API keys", "OpenCode Go API key", keyStatus(s.cfg.OpenCodeGoAPIKey, "OPENCODE_GO_API_KEY"), "Saved key overrides OPENCODE_GO_API_KEY. Leave blank to use the environment key.", "key2"},
+			{"Web search", "Exa API key", s.exaPolicyLabel() + keyStatus(s.cfg.ExaAPIKey, "EXA_API_KEY"), "Leave blank to use EXA_API_KEY. /providers controls search availability.", "key3"},
+		}
+	case settingsRoles:
+		rows := make([]settingRow, 0, len(s.cfg.Roles))
+		for _, role := range s.cfg.Roles {
+			label := settingsText(role.Name)
+			if role.Name == s.cfg.DefaultRole {
+				label += " (default)"
+			}
+			rows = append(rows, settingRow{"Configured roles", label, settingsText(role.Backend() + " · " + role.Model), settingsText(role.Description), "role"})
+		}
+		return rows
+	default:
+		input := "Rounded box"
+		if s.cfg.ChatInputLines {
+			input = "Horizontal rules"
+		}
+		return []settingRow{
+			{"Input", "Chat input style", input, "Change the border around the chat input.", "t"},
+			{"Status line", "Model", settingOn(!s.cfg.StatusLine.HideModel), "Show the active mode and model below chat.", "status0"},
+			{"Status line", "Tokens", settingOn(!s.cfg.StatusLine.HideTokens), "Show token counts below chat.", "status1"},
+			{"Status line", "Context usage", settingOn(!s.cfg.StatusLine.HideContext), "Show how much of the model context is in use.", "status2"},
+			{"Status line", "Cost", settingOn(!s.cfg.StatusLine.HideCost), "Show request cost below chat.", "status3"},
+			{"Experimental", "Docker sandbox (experimental)", settingOn(s.cfg.Safety.DockerSandbox), "Off: local shell with host/network access. On: offline Docker sandbox; requires sandbox build.", "x"},
+			{"Command output", "Command output", s.commandOutputLabel(), "Keep command results short and save full logs for later retrieval.", "b"},
+		}
+	}
+}
+
+func settingsText(value string) string  { return strings.Join(strings.Fields(safeText(value)), " ") }
+func (s settingsModel) boxWidth() int   { return max(4, s.w-2) }
+func (s settingsModel) inputWidth() int { return max(1, min(60, s.boxWidth()-s.sidebarWidth()-8)) }
+func (s settingsModel) sidebarWidth() int {
+	if s.w < 65 || s.tab == settingsContext || s.tab == settingsRoles || s.mode != sList {
+		return 0
+	}
+	return min(24, max(16, s.w/5))
+}
+func settingsPad(value string, width int) string {
+	value = ansi.Truncate(value, max(0, width), "…")
+	return value + strings.Repeat(" ", max(0, width-lipgloss.Width(value)))
+}
 
 func (s settingsModel) View() string {
 	w := s.boxWidth()
-	lines := s.headingLines(w)
+	inner := max(1, w-2)
+	h := s.h
+	if h <= 0 {
+		h = 30
+	}
+	// The title, tabs, separators, description and footer share one frame.
+	hintHeight := 1
+	if h >= 16 {
+		hintHeight = 2
+	}
+	bodyHeight := max(1, h-8-hintHeight)
+	side := s.sidebarWidth()
+	contentWidth := max(1, inner-side-4)
+	rows := s.rows()
+	selected := s.rowCursor
+	if s.tab == settingsRoles {
+		selected = s.cursor
+	}
+	selected = max(0, min(selected, len(rows)-1))
+	section, hint := "", ""
+	if len(rows) > 0 {
+		section, hint = rows[selected].section, rows[selected].hint
+	}
+	footer := s.listFooter(inner)
+	var content []string
+	var sections []string
+	switch s.mode {
+	case sRoleForm, sValueForm:
+		labels := []string{"Name", "Model ID", "When to use this role", "Provider"}
+		hints := []string{
+			"Unique name: 1–32 lowercase letters, digits, _ or -.",
+			"OpenRouter: provider/model. Other providers: their model ID.",
+			"Describe tasks this role handles; Jev uses this to pick a role.",
+			"Use ←/→ or Space to choose OpenRouter, DeepSeek or OpenCode Go.",
+		}
+		section = "Edit role"
+		if s.editingIdx < 0 {
+			section = "Add role"
+		} else if s.mode == sRoleForm {
+			section += ": " + settingsText(s.cfg.Roles[s.editingIdx].Name)
+		}
+		footer = "Tab/Shift+Tab fields · Enter save · Esc cancel"
+		if s.mode == sValueForm {
+			labels = []string{s.editRow.label}
+			hints = []string{s.editRow.hint}
+			section = s.editRow.section
+			footer = "Enter save · Esc cancel"
+		}
+		hint = hints[s.focus]
+		for i := range s.inputs {
+			label := dimStyle.Render(labels[i])
+			if i == s.focus {
+				label = accent.Bold(true).Render(labels[i])
+			}
+			value := s.inputs[i].View()
+			if s.mode == sRoleForm && i == 3 {
+				choices := make([]string, len(roleProviders))
+				for j, provider := range roleProviders {
+					choices[j] = dimStyle.Render(provider)
+					if provider == s.inputs[3].Value() {
+						choices[j] = accent.Bold(true).Render("[" + provider + "]")
+					}
+				}
+				value = strings.Join(choices, "  ")
+				if lipgloss.Width(value) > contentWidth {
+					value = accent.Bold(true).Render("["+s.inputs[3].Value()+"]") + dimStyle.Render("  ←/→ choose")
+				}
+				if s.focus == 3 {
+					footer = "←→ provider · Tab fields · Enter save · Esc cancel"
+				}
+			}
+			content = append(content, label, value, "")
+		}
+	case sDefaultRole:
+		section, hint = "Default role", "Use this role when routing confidence is below the threshold."
+		footer = "↑↓ or Tab select · Enter save · Esc cancel"
+		for i, role := range s.cfg.Roles {
+			label := settingsText(role.Name)
+			if role.Name == s.cfg.DefaultRole {
+				label += " (current)"
+			}
+			content = append(content, settingsRow(label, settingsText(role.Model), contentWidth, i == s.choiceCursor))
+		}
+	case sDeleteRole:
+		section = "Delete role"
+		hint = "Enter confirms deletion. Esc keeps the role."
+		footer = "Enter delete · Esc cancel"
+		content = []string{"Delete " + settingsText(s.cfg.Roles[s.cursor].Name) + "?", "", "This removes the role from routing."}
+	case sHelp:
+		section = "Keyboard controls"
+		footer, hint = "↑↓ scroll · Esc or ? back", "Toggles save now. Enter saves edits; Esc cancels."
+		content = settingsHelpLines(contentWidth)
+	default:
+		for i, row := range rows {
+			if i == 0 || row.section != rows[i-1].section {
+				sections = append(sections, row.section)
+				content = append(content, dimStyle.Underline(true).Bold(true).Render(row.section))
+			}
+			content = append(content, settingsRow(row.label, row.value, contentWidth, i == selected))
+		}
+	}
+	if s.mode != sList {
+		content = append([]string{dimStyle.Underline(true).Bold(true).Render(section)}, content...)
+	}
+	// Scroll the active row/field into view, keeping the footer fixed.
+	active := 0
 	if s.mode == sList {
-		lines = append(lines, s.listLines(w)...)
-	} else if s.mode == sStatusForm {
-		lines = append(lines, s.statusLines(w)...)
+		for i := 0; i <= selected && i < len(rows); i++ {
+			if i == 0 || rows[i].section != rows[i-1].section {
+				active++
+			}
+			if i < selected {
+				active++
+			}
+		}
+	} else if s.mode == sRoleForm || s.mode == sValueForm {
+		active = s.focus*3 + 2
+	} else if s.mode == sDefaultRole {
+		active = s.choiceCursor + 1
 	} else if s.mode == sHelp {
-		lines = append(lines, s.helpLines(w)...)
-	} else {
-		lines = append(lines, s.formLines(w)...)
+		active = min(s.helpCursor+1, len(content)-1)
+	}
+	start := max(0, min(active-bodyHeight+1, len(content)-bodyHeight))
+	border := func(left, right string) string { return dimStyle.Render(left + strings.Repeat("─", inner) + right) }
+	frameRow := func(row string) string {
+		return " " + dimStyle.Render("│") + settingsPad(row, inner) + dimStyle.Render("│")
+	}
+	title := " Settings "
+	lines := []string{" " + dimStyle.Render("╭") + accent.Bold(true).Render(title) + dimStyle.Render(strings.Repeat("─", max(0, inner-lipgloss.Width(title)))) + "╮"}
+	tabs := make([]string, len(settingsTabs))
+	for i, tab := range settingsTabs {
+		tabs[i] = dimStyle.Render(" " + tab + " ")
+		if i == s.tab {
+			tabs[i] = settingsSelected.Render(" " + tab + " ")
+		}
+	}
+	tabLine := strings.Join(tabs, "  ")
+	if lipgloss.Width(tabLine) > inner {
+		tabLine = tabs[s.tab] + dimStyle.Render(fmt.Sprintf("  %d/%d", s.tab+1, len(settingsTabs)))
+		if s.mode == sList {
+			tabLine += dimStyle.Render("  ←→ tabs")
+		}
+	}
+	lines = append(lines, frameRow(tabLine), " "+border("├", "┤"))
+	for i := 0; i < bodyHeight; i++ {
+		right := ""
+		if start+i < len(content) {
+			right = content[start+i]
+		}
+		row := " "
+		if side > 0 {
+			left := ""
+			if i < len(sections) {
+				left = dimStyle.Render(sections[i])
+				if sections[i] == section {
+					left = accent.Bold(true).Render(sections[i])
+				}
+			}
+			row += settingsPad(left, side-1) + dimStyle.Render("│") + "  "
+		} else {
+			row += " "
+		}
+		row += settingsPad(right, contentWidth)
+		scroll := " "
+		if len(content) > bodyHeight {
+			scroll = dimStyle.Render("│")
+			if i == start*(bodyHeight-1)/max(1, len(content)-bodyHeight) {
+				scroll = accent.Render("┃")
+			}
+		}
+		lines = append(lines, frameRow(settingsPad(row, inner-1)+scroll))
 	}
 	if s.msg != "" {
-		style := okStyle
+		hint = settingsText(s.msg)
 		if s.msgIsErr {
-			style = errStyle
-		}
-		if s.h > 0 && len(lines)+2 > s.h {
-			inner := max(1, w-4)
-			message := ansi.Truncate(style.Render(settingsText(s.msg)), inner, "…")
-			lines[1] = "  " + dimStyle.Render("│") + " " + message + strings.Repeat(" ", max(0, inner-lipgloss.Width(message))) + " " + dimStyle.Render("│")
+			hint = errStyle.Render(hint)
 		} else {
-			lines = append(lines, "", "  "+style.Render(settingsText(s.msg)))
+			hint = okStyle.Render(hint)
+		}
+	} else {
+		hint = dimStyle.Render(hint)
+	}
+	if inner < 52 && s.mode != sList {
+		footer = "Enter save · Esc cancel"
+		if s.mode == sDeleteRole {
+			footer = "Enter delete · Esc cancel"
+		}
+		if s.mode == sHelp {
+			footer = "↑↓ scroll · Esc back"
 		}
 	}
-	// Keep the final frame inside the terminal, including unusually small ones.
-	for i := range lines {
-		lines[i] = ansi.Truncate(lines[i], max(1, s.w), "…")
+	lines = append(lines, frameRow(""))
+	hintLines := strings.Split(ansi.Wrap(hint, max(1, inner-2), " "), "\n")
+	for i := 0; i < hintHeight; i++ {
+		line := ""
+		if i < len(hintLines) {
+			line = hintLines[i]
+		}
+		lines = append(lines, frameRow(" "+line))
 	}
-	if s.h > 0 && len(lines) > s.h {
-		lines = lines[:s.h]
+	lines = append(lines, " "+border("├", "┤"), frameRow(" "+dimStyle.Render(footer)), " "+border("╰", "╯"))
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], max(1, s.w), "")
+	}
+	if len(lines) > h {
+		lines = lines[:h]
 	}
 	return strings.Join(lines, "\n")
 }
 
-func (s settingsModel) headingLines(w int) []string {
-	section := "Settings"
-	switch s.mode {
-	case sStatusForm:
-		section = "Settings  /  Status line"
-	case sHelp:
-		section = "Settings  /  Help"
-	case sContextForm:
-		section = "Settings  /  Context"
-	case sGlobalsForm:
-		section = "Settings  /  Routing"
-	case sRoleForm:
-		section = "Settings  /  Roles"
+func settingsRow(label, value string, width int, selected bool) string {
+	labelWidth := min(38, max(10, width/2))
+	row := settingsPad(settingsText(label), labelWidth) + "  " + dimStyle.Render(value)
+	row = settingsPad(row, width)
+	if selected {
+		return settingsSelected.Render(ansi.Strip(row))
 	}
-	subtitle := "Configure routing, chat, and roles"
-	if s.mode == sStatusForm {
-		subtitle = "Choose what appears in the chat status line"
-	}
-	lines := settingsBox(w, section, []string{dimStyle.Render(subtitle)})
-	if s.h <= 0 || s.h >= 20 {
-		lines = append(lines, "")
-	}
-	return lines
-}
-
-func (s settingsModel) boxWidth() int {
-	return max(8, min(132, s.w-4))
-}
-
-func (s settingsModel) inputWidth() int {
-	return max(1, min(60, s.boxWidth()-4))
-}
-
-// settingsText makes config values safe to place on a single terminal row.
-func settingsText(value string) string {
-	return strings.Join(strings.Fields(safeText(value)), " ")
-}
-
-// settingsBox draws a heading into the top edge and pads every content row.
-// width includes the border and the one-cell padding on each side.
-func settingsBox(width int, heading string, content []string) []string {
-	inner := max(1, width-4)
-	title := "─ " + settingsText(heading) + " "
-	title = ansi.Truncate(title, max(1, width-2), "…")
-	top := "╭" + accent.Render(title) + dimStyle.Render(strings.Repeat("─", max(0, width-2-lipgloss.Width(title)))) + "╮"
-	lines := []string{"  " + top}
-	for _, row := range content {
-		row = ansi.Truncate(row, inner, "…")
-		lines = append(lines, "  "+dimStyle.Render("│")+" "+row+strings.Repeat(" ", max(0, inner-lipgloss.Width(row)))+" "+dimStyle.Render("│"))
-	}
-	lines = append(lines, "  "+dimStyle.Render("╰"+strings.Repeat("─", max(0, width-2))+"╯"))
-	return lines
-}
-
-func (s settingsModel) listLines(w int) []string {
-	if s.h > 0 && s.h < 24 {
-		return s.compactListLines(w)
-	}
-	inner := w - 4
-	labelWidth := min(20, max(10, inner/3))
-	row := func(label, value string) string {
-		return dimStyle.Render(fmt.Sprintf("%-*s", labelWidth, label)) + ansi.Truncate(value, max(1, inner-labelWidth), "…")
-	}
-	keyState := errStyle.Render("not set")
-	if strings.TrimSpace(s.cfg.APIKey) != "" {
-		keyState = okStyle.Render("saved")
-	} else if strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")) != "" {
-		keyState = okStyle.Render("env")
-	}
-	lines := settingsBox(w, "ROUTING  [g] edit", []string{
-		row("OpenRouter key", keyState),
-		row("DeepSeek key", keyStatus(s.cfg.DeepSeekAPIKey, "DEEPSEEK_API_KEY")),
-		row("OpenCode Go key", keyStatus(s.cfg.OpenCodeGoAPIKey, "OPENCODE_GO_API_KEY")),
-		row("Jev model", accent.Render(settingsText(s.cfg.JevModel))),
-		row("Threshold", fmt.Sprintf("%g  %s", s.cfg.ConfidenceThreshold, dimStyle.Render("below → default role"))),
-	})
-	lines = append(lines, "")
-	inputStyle := "Rounded box"
-	if s.cfg.ChatInputLines {
-		inputStyle = "Horizontal rules"
-	}
-	lines = append(lines, settingsBox(w, "CHAT", []string{
-		row("[t] Input", accent.Render(inputStyle)),
-		row("[s] Status line", dimStyle.Render("Choose visible items")),
-		row("[c] Compaction", s.compactionLabel()),
-	})...)
-	lines = append(lines, "")
-	// Reserve room for the panels and shortcut footer. Keep the selected role
-	// visible when a long list does not fit on screen.
-	visible := len(s.cfg.Roles)
-	if s.h > 0 {
-		if s.h >= 24 {
-			visible = min(visible, max(1, (s.h-23)/2))
-		} else {
-			visible = min(visible, max(1, (s.h-18)/2))
-		}
-	}
-	start := max(0, min(s.cursor-visible/2, len(s.cfg.Roles)-visible))
-	roles := make([]string, 0, visible*2+1)
-	for i := start; i < start+visible; i++ {
-		r := s.cfg.Roles[i]
-		marker := "  "
-		nameStyle := boldStyle
-		if i == s.cursor {
-			marker = okStyle.Render("▸ ")
-			nameStyle = okStyle.Bold(true)
-		}
-		star := "  "
-		if r.Name == s.cfg.DefaultRole {
-			star = warnStyle.Render("★ ")
-		}
-		name := ansi.Truncate(settingsText(r.Name), max(1, inner/2-4), "…")
-		left := marker + star + nameStyle.Render(name)
-		modelWidth := min(max(8, inner/2), max(1, inner-lipgloss.Width(left)-1))
-		model := accent.Render(ansi.Truncate(settingsText(r.Backend()+" · "+r.Model), modelWidth, "…"))
-		gap := max(1, inner-lipgloss.Width(left)-lipgloss.Width(model))
-		roles = append(roles, left+strings.Repeat(" ", gap)+model)
-		roles = append(roles, "    "+dimStyle.Render(ansi.Truncate(settingsText(r.Description), max(1, inner-4), "…")))
-	}
-	if visible < len(s.cfg.Roles) && s.h < 24 {
-		roles = append(roles, dimStyle.Render(fmt.Sprintf("    Showing %d–%d of %d roles", start+1, start+visible, len(s.cfg.Roles))))
-	}
-	lines = append(lines, settingsBox(w, "ROLES", roles)...)
-	lines = append(lines, "", "  "+dimStyle.Render("↑↓ select role    Enter edit    ? help    Esc back"), "")
-	return lines
-}
-
-func (s settingsModel) compactListLines(w int) []string {
-	inputStyle := "Rounded box"
-	if s.cfg.ChatInputLines {
-		inputStyle = "Horizontal rules"
-	}
-	lines := []string{"  " + dimStyle.Render("[c] Context: ") + s.compactionLabel(), "  " + dimStyle.Render("[g] Routing  ·  [t] Input: ") + accent.Render(inputStyle) + dimStyle.Render("  ·  [s] Status"), ""}
-	if len(s.cfg.Roles) > 0 {
-		i := max(0, min(s.cursor, len(s.cfg.Roles)-1))
-		role := s.cfg.Roles[i]
-		marker := ""
-		if role.Name == s.cfg.DefaultRole {
-			marker = "★ "
-		}
-		rows := []string{
-			okStyle.Render("▸ ") + marker + settingsText(role.Name) + "  " + dimStyle.Render(settingsText(role.Backend()+" · "+role.Model)),
-			"  " + dimStyle.Render(settingsText(role.Description)),
-		}
-		lines = append(lines, settingsBox(w, "ROLES", rows)...)
-	}
-	lines = append(lines, "  "+dimStyle.Render("↑↓ role   Enter edit   ? help   Esc back"))
-	return lines
-}
-
-func (s settingsModel) statusLines(w int) []string {
-	hidden := []bool{
-		s.cfg.StatusLine.HideModel,
-		s.cfg.StatusLine.HideTokens,
-		s.cfg.StatusLine.HideContext,
-		s.cfg.StatusLine.HideCost,
-	}
-	labels := []string{"Mode and model", "Token counts", "Context usage", "Cost"}
-	rows := make([]string, len(labels))
-	for i, label := range labels {
-		marker := "  "
-		if i == s.statusCursor {
-			marker = okStyle.Render("▸ ")
-		}
-		state := okStyle.Render("On")
-		if hidden[i] {
-			state = dimStyle.Render("Off")
-		}
-		rows[i] = marker + label + "  " + state
-	}
-	lines := settingsBox(w, "STATUS LINE", rows)
-	if s.h <= 0 || s.h >= 20 {
-		lines = append(lines, "", "  "+dimStyle.Render("↑↓ select    Enter toggle    Esc settings"), "")
-	}
-	return lines
-}
-
-func (s settingsModel) helpLines(w int) []string {
-	lines := settingsBox(w, "ROLE ACTIONS", []string{
-		"↑ / ↓    Select a role",
-		"Enter    Edit selected role",
-		"n        Add a role",
-		"d        Delete selected role",
-		"D        Make selected role the default",
-	})
-	lines = append(lines, "")
-	lines = append(lines, settingsBox(w, "OTHER SETTINGS", []string{
-		"g        Routing and API keys",
-		"t        Toggle chat input style",
-		"s        Choose status line items",
-		"c        Context compaction threshold",
-	})...)
-	lines = append(lines, "", "  "+dimStyle.Render("Esc back"))
-	return lines
-}
-
-func (s settingsModel) formLines(w int) []string {
-	title := "NEW ROLE"
-	labels := []string{"Name", "Model ID", "Routing description", "Provider (openrouter / deepseek / opencode-go)"}
-	if s.mode == sContextForm {
-		title = "CONTEXT COMPACTION"
-		labels = []string{"Start compacting at % (1–100; 0 disables)"}
-	} else if s.mode == sGlobalsForm {
-		title = "ROUTING SETTINGS"
-		labels = []string{"Jev model ID", "Confidence threshold (0–1)", "OpenRouter API key", "DeepSeek API key", "OpenCode Go API key"}
-	} else if s.editingIdx >= 0 {
-		title = "EDIT ROLE · " + settingsText(s.cfg.Roles[s.editingIdx].Name)
-	}
-	content := make([]string, 0, len(s.inputs)*3)
-	start, end := 0, len(s.inputs)
-	if s.h > 0 {
-		visible := max(1, (s.h-12)/3)
-		start = max(0, min(s.focus-visible/2, len(s.inputs)-visible))
-		end = min(len(s.inputs), start+visible)
-	}
-	for i := start; i < end; i++ {
-		label := dimStyle.Render(labels[i])
-		if i == s.focus {
-			label = okStyle.Render("▸ " + labels[i])
-		}
-		content = append(content, label, s.inputs[i].View())
-		if i < end-1 {
-			content = append(content, "")
-		}
-	}
-	lines := settingsBox(w, title, content)
-	if s.mode == sGlobalsForm {
-		lines = append(lines, "", "  "+dimStyle.Render("Saved keys override OPENROUTER_API_KEY / DEEPSEEK_API_KEY / OPENCODE_GO_API_KEY."))
-	}
-	lines = append(lines, "", "  "+dimStyle.Render("tab / shift+tab move  ·  enter save  ·  esc cancel"))
-	return lines
+	return row
 }
 
 func (s settingsModel) compactionLabel() string {
@@ -285,12 +301,99 @@ func (s settingsModel) compactionLabel() string {
 	return accent.Render(fmt.Sprintf("%d%% of model context", s.cfg.CompactionThreshold))
 }
 
+func (s settingsModel) commandOutputLabel() string {
+	if s.cfg.CompactCommandOutput {
+		return okStyle.Render("Compact")
+	}
+	return dimStyle.Render("Standard")
+}
+
 func keyStatus(saved, env string) string {
 	if strings.TrimSpace(saved) != "" {
-		return okStyle.Render("saved")
+		return okStyle.Render("Saved key")
 	}
 	if strings.TrimSpace(os.Getenv(env)) != "" {
-		return okStyle.Render("env")
+		return okStyle.Render("Environment")
 	}
-	return errStyle.Render("not set")
+	return dimStyle.Render("Not configured")
+}
+
+func (s settingsModel) exaPolicyLabel() string {
+	status := s.cfg.ExaSearchStatus("")
+	if s.ag != nil {
+		status = s.ag.WebSearchStatus()
+	}
+	if strings.HasPrefix(status, "disabled") {
+		return warnStyle.Render("disabled by /providers · ")
+	}
+	return ""
+}
+
+func settingOn(on bool) string {
+	if on {
+		return "On"
+	}
+	return "Off"
+}
+
+var settingsHelp = []string{
+	"↑/↓ or j/k   Select a setting or role",
+	"←/→          Switch tabs (remembers selection)",
+	"Tab/Shift+Tab Jump sections; move rows on single-section pages",
+	"Enter/Space  Edit a value or toggle a setting",
+	"n / d / D    Add / delete / set default in Roles",
+	"Tab/Shift+Tab Move between fields in an edit form",
+	"←/→ or Space Choose a role provider in an edit form",
+	"Enter        Save an edit or confirm a choice",
+	"Esc          Cancel an edit; close settings from the list",
+	"g / c / s    Routing model / compaction / status line",
+	"t / b / x    Toggle input style / command output / experimental Docker sandbox",
+}
+
+func settingsHelpLines(width int) []string {
+	var lines []string
+	for _, line := range settingsHelp {
+		lines = append(lines, strings.Split(ansi.Wrap(line, width, " "), "\n")...)
+	}
+	return lines
+}
+
+func (s settingsModel) listFooter(width int) string {
+	if s.tab == settingsRoles {
+		if width < 36 {
+			return "Enter edit · Esc"
+		}
+		if width < 52 {
+			return "Enter edit · n add · ? help · Esc"
+		}
+		if width < 90 {
+			return "Enter edit · n add · d delete · D default · ? help · Esc close"
+		}
+		return "↑↓ select · Enter edit · n add · d delete · D default · ←→ tabs · ? help · Esc close"
+	}
+	action := "edit"
+	rows := s.rows()
+	if len(rows) > 0 {
+		row := rows[s.selectedRow()]
+		if row.action == "default" {
+			action = "choose"
+		}
+		if row.action == "t" || row.action == "b" || row.action == "x" || strings.HasPrefix(row.action, "status") {
+			action = "toggle"
+		}
+	}
+	if width < 36 {
+		return "Enter " + action + " · Esc"
+	}
+	if width < 52 {
+		return "Enter " + action + " · ? help · Esc close"
+	}
+	if width < 90 {
+		return "↑↓ select · Enter " + action + " · ←→ tabs · ? help · Esc close"
+	}
+	footer := "↑↓ select · Enter/Space " + action
+	if s.tab != settingsContext {
+		footer += " · Tab section"
+	}
+	return footer + " · ←→ tabs · ? help · Esc close"
 }

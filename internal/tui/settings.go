@@ -2,158 +2,246 @@ package tui
 
 import (
 	"fmt"
+	"math"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
-
 	"jevharness/internal/agent"
 	"jevharness/internal/config"
 )
 
-// closeSettingsMsg returns to chat; cfg is the current (validated) config.
 type closeSettingsMsg struct{ cfg config.Config }
-
 type sMode int
 
 const (
 	sList sMode = iota
 	sRoleForm
-	sGlobalsForm
-	sStatusForm
+	sValueForm
 	sHelp
-	sContextForm
+	sDefaultRole
+	sDeleteRole
+)
+const (
+	settingsAppearance = iota
+	settingsRouting
+	settingsContext
+	settingsProviders
+	settingsRoles
 )
 
-type settingsModel struct {
-	ag   *agent.Agent
-	cfg  config.Config
-	mode sMode
+var settingsRoleName = regexp.MustCompile(`^[a-z0-9_-]{1,32}$`)
 
-	cursor       int
-	statusCursor int
-	editingIdx   int // index into cfg.Roles, or -1 for a new role
-	inputs       []textinput.Model
-	focus        int
-	msg          string
-	msgIsErr     bool
-	w, h         int
+var roleProviders = []string{"openrouter", "deepseek", "opencode-go"}
+
+type settingsModel struct {
+	ag                       *agent.Agent
+	cfg                      config.Config
+	mode                     sMode
+	tab, rowCursor, cursor   int
+	positions                [5]int
+	choiceCursor, helpCursor int
+	editingIdx               int
+	editRow                  settingRow
+	inputs                   []textinput.Model
+	focus                    int
+	msg                      string
+	msgIsErr                 bool
+	w, h                     int
 }
 
 func newSettings(ag *agent.Agent, cfg config.Config, w, h int) settingsModel {
-	return settingsModel{ag: ag, cfg: cfg, w: w, h: h}
+	return settingsModel{ag: ag, cfg: cfg, w: w, h: h, editingIdx: -1}
 }
-
 func (s *settingsModel) resize(w, h int) {
 	s.w, s.h = w, h
 	for i := range s.inputs {
 		s.inputs[i].SetWidth(s.inputWidth())
 	}
 }
-
+func (s *settingsModel) clearMessage() { s.msg, s.msgIsErr = "", false }
+func (s settingsModel) selectedRow() int {
+	if s.tab == settingsRoles {
+		return s.cursor
+	}
+	return s.rowCursor
+}
+func (s *settingsModel) switchTab(tab int) {
+	s.positions[s.tab] = s.selectedRow()
+	s.tab = (tab + len(settingsTabs)) % len(settingsTabs)
+	s.rowCursor = min(s.positions[s.tab], max(0, len(s.rows())-1))
+	if s.tab == settingsRoles {
+		s.cursor = s.rowCursor
+	}
+	s.clearMessage()
+}
 func (s settingsModel) Update(msg tea.Msg) (settingsModel, tea.Cmd) {
 	switch s.mode {
-	case sRoleForm, sGlobalsForm, sContextForm:
+	case sRoleForm, sValueForm:
 		return s.updateForm(msg)
-	case sStatusForm:
-		return s.updateStatus(msg)
+	case sDefaultRole, sDeleteRole:
+		return s.updateChoice(msg)
 	case sHelp:
-		if k, ok := msg.(tea.KeyPressMsg); ok && (k.String() == "esc" || k.String() == "?") {
-			s.mode = sList
+		if k, ok := msg.(tea.KeyPressMsg); ok {
+			switch k.String() {
+			case "esc", "?":
+				s.mode = sList
+			case "down", "j", "tab":
+				s.helpCursor = min(s.helpCursor+1, len(settingsHelpLines(max(1, s.boxWidth()-6)))-1)
+			case "up", "k", "shift+tab":
+				s.helpCursor = max(0, s.helpCursor-1)
+			}
 		}
 		return s, nil
 	default:
 		return s.updateList(msg)
 	}
 }
-
-// ---- roles list ----
-
 func (s settingsModel) updateList(msg tea.Msg) (settingsModel, tea.Cmd) {
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return s, nil
 	}
-	fail := func(m string) (settingsModel, tea.Cmd) {
-		s.msg, s.msgIsErr = m, true
-		return s, nil
-	}
+	fail := func(message string) (settingsModel, tea.Cmd) { s.msg, s.msgIsErr = message, true; return s, nil }
 	switch k.String() {
 	case "esc":
 		return s, func() tea.Msg { return closeSettingsMsg{cfg: s.cfg} }
-	case "up", "k":
-		if s.cursor > 0 {
-			s.cursor--
+	case "left":
+		s.switchTab(s.tab - 1)
+	case "right":
+		s.switchTab(s.tab + 1)
+	case "up", "k", "down", "j", "tab", "shift+tab":
+		rows := s.rows()
+		if len(rows) == 0 {
+			return s, nil
 		}
-	case "down", "j":
-		if s.cursor < len(s.cfg.Roles)-1 {
-			s.cursor++
+		current, next := s.selectedRow(), s.selectedRow()
+		delta := 1
+		if k.String() == "up" || k.String() == "k" || k.String() == "shift+tab" {
+			delta = -1
+		}
+		if k.String() == "tab" || k.String() == "shift+tab" {
+			// A single-section page still lets Tab move through its rows.
+			next = (current + delta + len(rows)) % len(rows)
+			for offset := 1; offset < len(rows); offset++ {
+				candidate := (current + delta*offset + len(rows)) % len(rows)
+				if rows[candidate].section != rows[current].section {
+					next = candidate
+					break
+				}
+			}
+		} else {
+			next = max(0, min(current+delta, len(rows)-1))
+		}
+		if s.tab == settingsRoles {
+			s.cursor = next
+		} else {
+			s.rowCursor = next
+		}
+		s.clearMessage()
+	case "enter", "e", "space", " ":
+		if s.tab == settingsRoles {
+			if len(s.cfg.Roles) > 0 {
+				return s.openRoleForm(s.cursor)
+			}
+			return s, nil
+		}
+		row := s.rows()[s.rowCursor]
+		switch row.action {
+		case "t", "b", "x":
+			return s.updateList(tea.KeyPressMsg{Code: rune(row.action[0])})
+		case "default":
+			s.mode, s.choiceCursor = sDefaultRole, 0
+			for i, role := range s.cfg.Roles {
+				if role.Name == s.cfg.DefaultRole {
+					s.choiceCursor = i
+				}
+			}
+			s.clearMessage()
+			return s, nil
+		case "status0", "status1", "status2", "status3":
+			cfg := s.cfg
+			hidden := []*bool{&cfg.StatusLine.HideModel, &cfg.StatusLine.HideTokens, &cfg.StatusLine.HideContext, &cfg.StatusLine.HideCost}
+			index := int(row.action[len(row.action)-1] - '0')
+			*hidden[index] = !*hidden[index]
+			return s.applyConfig(cfg, row.label+" saved")
+		default:
+			return s.openValueForm(row)
 		}
 	case "n":
-		return s.openRoleForm(-1)
-	case "enter", "e":
-		return s.openRoleForm(s.cursor)
+		if s.tab == settingsRoles {
+			return s.openRoleForm(-1)
+		}
 	case "d":
-		if len(s.cfg.Roles) <= 1 {
-			return fail("cannot delete the last role")
+		if s.tab != settingsRoles || len(s.cfg.Roles) == 0 {
+			return s, nil
 		}
-		role := s.cfg.Roles[s.cursor]
-		if role.Name == s.cfg.DefaultRole {
-			return fail("cannot delete the default role; mark another default first (D)")
+		if len(s.cfg.Roles) == 1 {
+			return fail("Keep at least one role.")
 		}
-		cfg := s.cfg
-		cfg.Roles = append([]config.Role(nil), s.cfg.Roles...)
-		cfg.Roles = append(cfg.Roles[:s.cursor], cfg.Roles[s.cursor+1:]...)
-		m, cmd := s.applyConfig(cfg, "deleted "+role.Name)
-		if !m.msgIsErr && s.cursor >= len(m.cfg.Roles) {
-			m.cursor = len(m.cfg.Roles) - 1
+		if s.cfg.Roles[s.cursor].Name == s.cfg.DefaultRole {
+			return fail("Choose another default role with D before deleting this one.")
 		}
-		return m, cmd
+		s.mode = sDeleteRole
+		s.clearMessage()
 	case "D":
-		cfg := s.cfg
-		cfg.DefaultRole = s.cfg.Roles[s.cursor].Name
-		return s.applyConfig(cfg, "default: "+cfg.DefaultRole)
-	case "c":
-		s.mode, s.focus, s.msg = sContextForm, 0, ""
-		s.inputs = []textinput.Model{newInput("compaction threshold", strconv.Itoa(s.cfg.CompactionThreshold))}
-		s.inputs[0].SetWidth(s.inputWidth())
-		return s, s.inputs[0].Focus()
+		if s.tab == settingsRoles && len(s.cfg.Roles) > 0 {
+			cfg := s.cfg
+			cfg.DefaultRole = cfg.Roles[s.cursor].Name
+			return s.applyConfig(cfg, "Default role: "+cfg.DefaultRole)
+		}
 	case "g":
-		return s.openGlobalsForm()
+		s.switchTab(settingsRouting)
+		s.rowCursor = 0
+		return s.openValueForm(s.rows()[0])
+	case "c":
+		s.switchTab(settingsContext)
+		s.rowCursor = 0
+		return s.openValueForm(s.rows()[0])
 	case "s":
-		s.mode = sStatusForm
-		s.statusCursor = 0
-		s.msg = ""
-		return s, nil
-	case "t":
+		s.switchTab(settingsAppearance)
+		s.rowCursor = 1
+	case "t", "b", "x":
+		s.switchTab(settingsAppearance)
 		cfg := s.cfg
-		cfg.ChatInputLines = !cfg.ChatInputLines
-		return s.applyConfig(cfg, "")
+		label := "Chat input style"
+		if k.String() == "t" {
+			s.rowCursor = 0
+			cfg.ChatInputLines = !cfg.ChatInputLines
+		} else if k.String() == "x" {
+			s.rowCursor = 5
+			cfg.Safety.DockerSandbox = !cfg.Safety.DockerSandbox
+			label = "Docker sandbox (experimental)"
+		} else {
+			s.rowCursor = 6
+			cfg.CompactCommandOutput = !cfg.CompactCommandOutput
+			label = "Command output"
+		}
+		return s.applyConfig(cfg, label+" saved")
 	case "?":
-		s.mode = sHelp
-		s.msg = ""
-		return s, nil
+		s.mode, s.helpCursor = sHelp, 0
+		s.clearMessage()
 	}
 	return s, nil
 }
-
 func (s settingsModel) applyConfig(cfg config.Config, message string) (settingsModel, tea.Cmd) {
 	if err := cfg.Validate(); err != nil {
 		s.msg, s.msgIsErr = err.Error(), true
 		return s, nil
 	}
 	if err := config.Save(cfg); err != nil {
-		s.msg, s.msgIsErr = "save: "+err.Error(), true
+		s.msg, s.msgIsErr = "Could not save: "+err.Error(), true
 		return s, nil
 	}
-	s.ag.SetConfig(cfg)
-	s.cfg = cfg
-	s.msg, s.msgIsErr = message, false
+	if s.ag != nil {
+		s.ag.SetConfig(cfg)
+	}
+	s.cfg, s.msg, s.msgIsErr = cfg, message, false
 	return s, nil
 }
-
-func (s settingsModel) updateStatus(msg tea.Msg) (settingsModel, tea.Cmd) {
+func (s settingsModel) updateChoice(msg tea.Msg) (settingsModel, tea.Cmd) {
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return s, nil
@@ -161,69 +249,80 @@ func (s settingsModel) updateStatus(msg tea.Msg) (settingsModel, tea.Cmd) {
 	switch k.String() {
 	case "esc":
 		s.mode = sList
-		s.msg = ""
+		s.clearMessage()
 	case "up", "k", "shift+tab":
-		s.statusCursor = (s.statusCursor + 3) % 4
-	case "down", "j", "tab":
-		s.statusCursor = (s.statusCursor + 1) % 4
-	case "enter", "space", " ":
-		cfg := s.cfg
-		switch s.statusCursor {
-		case 0:
-			cfg.StatusLine.HideModel = !cfg.StatusLine.HideModel
-		case 1:
-			cfg.StatusLine.HideTokens = !cfg.StatusLine.HideTokens
-		case 2:
-			cfg.StatusLine.HideContext = !cfg.StatusLine.HideContext
-		case 3:
-			cfg.StatusLine.HideCost = !cfg.StatusLine.HideCost
+		if s.mode == sDefaultRole {
+			s.choiceCursor = (s.choiceCursor + len(s.cfg.Roles) - 1) % len(s.cfg.Roles)
+			s.clearMessage()
 		}
-		return s.applyConfig(cfg, "")
+	case "down", "j", "tab":
+		if s.mode == sDefaultRole {
+			s.choiceCursor = (s.choiceCursor + 1) % len(s.cfg.Roles)
+			s.clearMessage()
+		}
+	case "enter":
+		cfg := s.cfg
+		message := ""
+		if s.mode == sDefaultRole {
+			cfg.DefaultRole = cfg.Roles[s.choiceCursor].Name
+			message = "Default role: " + cfg.DefaultRole
+		} else {
+			message = "Deleted " + cfg.Roles[s.cursor].Name
+			cfg.Roles = append([]config.Role(nil), cfg.Roles...)
+			cfg.Roles = append(cfg.Roles[:s.cursor], cfg.Roles[s.cursor+1:]...)
+		}
+		m, cmd := s.applyConfig(cfg, message)
+		if !m.msgIsErr {
+			m.mode = sList
+			m.cursor = min(m.cursor, len(m.cfg.Roles)-1)
+		}
+		return m, cmd
 	}
 	return s, nil
 }
-
 func (s settingsModel) openRoleForm(idx int) (settingsModel, tea.Cmd) {
-	s.mode = sRoleForm
-	s.editingIdx = idx
-	s.focus = 0
-	s.msg = ""
+	if s.tab != settingsRoles {
+		s.switchTab(settingsRoles)
+	}
+	s.mode, s.editingIdx, s.focus = sRoleForm, idx, 0
+	s.clearMessage()
 	role := config.Role{}
 	if idx >= 0 {
 		role = s.cfg.Roles[idx]
 	}
-	s.inputs = []textinput.Model{
-		newInput("name", role.Name),
-		newInput("model", role.Model),
-		newInput("description", role.Description),
-		newInput("provider (openrouter, deepseek, opencode-go)", role.Backend()),
-	}
+	s.inputs = []textinput.Model{newInput("e.g. research", role.Name), newInput("e.g. provider/model", role.Model), newInput("When should Jev use this role?", role.Description), newInput("", role.Backend())}
 	for i := range s.inputs {
 		s.inputs[i].SetWidth(s.inputWidth())
 	}
 	return s, s.inputs[0].Focus()
 }
-
-func (s settingsModel) openGlobalsForm() (settingsModel, tea.Cmd) {
-	s.mode = sGlobalsForm
-	s.focus = 0
-	s.msg = ""
-	s.inputs = []textinput.Model{
-		newInput("jev model", s.cfg.JevModel),
-		newInput("confidence threshold", fmt.Sprintf("%g", s.cfg.ConfidenceThreshold)),
-		newInput("openrouter api key", s.cfg.APIKey),
-		newInput("deepseek api key", s.cfg.DeepSeekAPIKey),
-		newInput("opencode go api key", s.cfg.OpenCodeGoAPIKey),
+func (s settingsModel) openValueForm(row settingRow) (settingsModel, tea.Cmd) {
+	s.mode, s.editRow, s.focus = sValueForm, row, 0
+	s.clearMessage()
+	value := ""
+	switch row.action {
+	case "model":
+		value = s.cfg.JevModel
+	case "threshold":
+		value = fmt.Sprintf("%g", s.cfg.ConfidenceThreshold)
+	case "c":
+		value = strconv.Itoa(s.cfg.CompactionThreshold)
+	case "key0":
+		value = s.cfg.APIKey
+	case "key1":
+		value = s.cfg.DeepSeekAPIKey
+	case "key2":
+		value = s.cfg.OpenCodeGoAPIKey
+	case "key3":
+		value = s.cfg.ExaAPIKey
 	}
-	for i := 2; i < len(s.inputs); i++ {
-		s.inputs[i].EchoMode = textinput.EchoPassword
+	s.inputs = []textinput.Model{newInput("", value)}
+	if strings.HasPrefix(row.action, "key") {
+		s.inputs[0].EchoMode = textinput.EchoPassword
 	}
-	for i := range s.inputs {
-		s.inputs[i].SetWidth(s.inputWidth())
-	}
+	s.inputs[0].SetWidth(s.inputWidth())
 	return s, s.inputs[0].Focus()
 }
-
 func newInput(placeholder, value string) textinput.Model {
 	t := textinput.New()
 	t.Placeholder = placeholder
@@ -231,90 +330,124 @@ func newInput(placeholder, value string) textinput.Model {
 	t.SetWidth(60)
 	return t
 }
-
-// ---- forms ----
-
 func (s settingsModel) updateForm(msg tea.Msg) (settingsModel, tea.Cmd) {
-	k, ok := msg.(tea.KeyPressMsg)
-	if ok {
+	if k, ok := msg.(tea.KeyPressMsg); ok {
 		switch k.String() {
 		case "esc":
 			s.mode = sList
 			s.inputs = nil
+			s.clearMessage()
 			return s, nil
 		case "enter":
 			return s.saveForm()
-		case "tab", "down":
+		case "tab", "down", "shift+tab", "up":
+			delta := 1
+			if k.String() == "shift+tab" || k.String() == "up" {
+				delta = -1
+			}
 			s.inputs[s.focus].Blur()
-			s.focus = (s.focus + 1) % len(s.inputs)
-			return s, s.inputs[s.focus].Focus()
-		case "shift+tab", "up":
-			s.inputs[s.focus].Blur()
-			s.focus = (s.focus - 1 + len(s.inputs)) % len(s.inputs)
+			s.focus = (s.focus + delta + len(s.inputs)) % len(s.inputs)
+			s.clearMessage()
 			return s, s.inputs[s.focus].Focus()
 		}
+		if s.mode == sRoleForm && s.focus == 3 {
+			if k.String() == "left" || k.String() == "right" || k.String() == "space" || k.String() == " " {
+				current := 0
+				for i, provider := range roleProviders {
+					if provider == s.inputs[3].Value() {
+						current = i
+					}
+				}
+				delta := 1
+				if k.String() == "left" {
+					delta = -1
+				}
+				s.inputs[3].SetValue(roleProviders[(current+delta+len(roleProviders))%len(roleProviders)])
+				s.clearMessage()
+			}
+			return s, nil
+		}
+		s.clearMessage()
 	}
 	var cmd tea.Cmd
 	s.inputs[s.focus], cmd = s.inputs[s.focus].Update(msg)
 	return s, cmd
 }
-
 func (s settingsModel) saveForm() (settingsModel, tea.Cmd) {
-	fail := func(m string) (settingsModel, tea.Cmd) {
-		s.msg, s.msgIsErr = m, true
-		return s, nil
-	}
+	fail := func(message string) (settingsModel, tea.Cmd) { s.msg, s.msgIsErr = message, true; return s, nil }
 	cfg := s.cfg
-	cfg.Roles = append([]config.Role(nil), s.cfg.Roles...)
-
 	if s.mode == sRoleForm {
-		role := config.Role{
-			Name:        strings.TrimSpace(s.inputs[0].Value()),
-			Model:       strings.TrimSpace(s.inputs[1].Value()),
-			Description: strings.TrimSpace(s.inputs[2].Value()),
-			Provider:    strings.ToLower(strings.TrimSpace(s.inputs[3].Value())),
-		}
+		cfg.Roles = append([]config.Role(nil), cfg.Roles...)
+		role := config.Role{}
 		if s.editingIdx >= 0 {
-			old := cfg.Roles[s.editingIdx].Name
-			cfg.Roles[s.editingIdx] = role
-			// renamed default role must keep its marker
-			if cfg.DefaultRole == old {
+			role = cfg.Roles[s.editingIdx]
+		}
+		role.Name, role.Model = strings.TrimSpace(s.inputs[0].Value()), strings.TrimSpace(s.inputs[1].Value())
+		role.Description, role.Provider = strings.TrimSpace(s.inputs[2].Value()), s.inputs[3].Value()
+		fieldError := func(index int, message string) (settingsModel, tea.Cmd) {
+			s.inputs[s.focus].Blur()
+			s.focus, s.msg, s.msgIsErr = index, message, true
+			return s, s.inputs[index].Focus()
+		}
+		if !settingsRoleName.MatchString(role.Name) {
+			return fieldError(0, "Use 1–32 lowercase letters, numbers, underscores or hyphens.")
+		}
+		for i, other := range cfg.Roles {
+			if i != s.editingIdx && other.Name == role.Name {
+				return fieldError(0, "A role with this name already exists. Choose another name.")
+			}
+		}
+		if role.Model == "" || strings.HasPrefix(role.Model, "-") {
+			return fieldError(1, "Enter a model ID for this provider.")
+		}
+		if role.Provider == "openrouter" && !strings.Contains(role.Model, "/") {
+			return fieldError(1, "OpenRouter model IDs use provider/model, such as openai/gpt-4.1.")
+		}
+		if role.Description == "" {
+			return fieldError(2, "Describe when Jev should use this role.")
+		}
+
+		if s.editingIdx >= 0 {
+			if cfg.DefaultRole == cfg.Roles[s.editingIdx].Name {
 				cfg.DefaultRole = role.Name
 			}
+			cfg.Roles[s.editingIdx] = role
 		} else {
 			cfg.Roles = append(cfg.Roles, role)
 		}
-	} else if s.mode == sContextForm {
-		n, err := strconv.Atoi(strings.TrimSpace(s.inputs[0].Value()))
-		if err != nil {
-			return fail("compaction threshold must be a whole percentage (0–100)")
-		}
-		cfg.CompactionThreshold = n
 	} else {
-		cfg.JevModel = strings.TrimSpace(s.inputs[0].Value())
-		f, err := strconv.ParseFloat(strings.TrimSpace(s.inputs[1].Value()), 64)
-		if err != nil {
-			return fail("confidence threshold: " + err.Error())
+		value := strings.TrimSpace(s.inputs[0].Value())
+		switch s.editRow.action {
+		case "model":
+			cfg.JevModel = value
+		case "threshold":
+			number, err := strconv.ParseFloat(value, 64)
+			if err != nil || math.IsNaN(number) || math.IsInf(number, 0) || number < 0 || number > 1 {
+				return fail("Enter a number from 0 to 1, such as 0.7.")
+			}
+			cfg.ConfidenceThreshold = number
+		case "c":
+			number, err := strconv.Atoi(value)
+			if err != nil || number < 0 || number > 100 {
+				return fail("Enter a whole percentage from 0 to 100. Use 0 to turn compaction off.")
+			}
+			cfg.CompactionThreshold = number
+		case "key0":
+			cfg.APIKey = value
+		case "key1":
+			cfg.DeepSeekAPIKey = value
+		case "key2":
+			cfg.OpenCodeGoAPIKey = value
+		case "key3":
+			cfg.ExaAPIKey = value
 		}
-		cfg.ConfidenceThreshold = f
-		cfg.APIKey = strings.TrimSpace(s.inputs[2].Value())
-		cfg.DeepSeekAPIKey = strings.TrimSpace(s.inputs[3].Value())
-		cfg.OpenCodeGoAPIKey = strings.TrimSpace(s.inputs[4].Value())
 	}
-
-	if err := cfg.Validate(); err != nil {
-		return fail(err.Error())
+	m, cmd := s.applyConfig(cfg, "Saved")
+	if !m.msgIsErr {
+		if s.mode == sRoleForm && s.editingIdx < 0 {
+			m.cursor = len(cfg.Roles) - 1
+		}
+		m.mode, m.inputs = sList, nil
 	}
-	if err := config.Save(cfg); err != nil {
-		return fail("save: " + err.Error())
-	}
-	s.ag.SetConfig(cfg)
-	s.cfg = cfg
-	s.mode = sList
-	s.inputs = nil
-	s.msg, s.msgIsErr = "saved", false
-	if s.cursor >= len(s.cfg.Roles) {
-		s.cursor = len(s.cfg.Roles) - 1
-	}
-	return s, nil
+	return m, cmd
 }
