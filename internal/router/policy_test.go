@@ -24,7 +24,12 @@ func TestProviderPolicyBeforeClassification(t *testing.T) {
 	cfg.Roles = append(cfg.Roles, config.Role{Name: "other", Provider: "deepseek", Model: "other", Description: "other"})
 	cfg.Safety.Projects["/project"] = []string{"deepseek"}
 	d = New(openrouter.New(""), cfg).RouteProject(context.Background(), "/project", State{})
-	if d.Err == nil {
-		t.Fatal("classified through forbidden OpenRouter")
+	if d.Err != nil || d.Role.Name != "direct" || d.Source != SourceDefault {
+		t.Fatal("disabled classifier did not use an enabled fallback", d)
+	}
+	cfg.DefaultRole = "other"
+	d = New(openrouter.New(""), cfg).RouteProject(context.Background(), "/project", State{})
+	if d.Role.Name != "other" || d.Source != SourceDefault {
+		t.Fatal("enabled default role ignored", d)
 	}
 }

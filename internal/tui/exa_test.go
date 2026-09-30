@@ -29,7 +29,7 @@ func TestExaSettingsShowsBlockedKey(t *testing.T) {
 	s := newSettings(nil, cfg, 140, 50)
 	s.tab = 3
 	view := s.View()
-	if !strings.Contains(view, "disabled by /providers") || strings.Contains(view, cfg.ExaAPIKey) {
+	if !strings.Contains(view, "Disabled in settings") || strings.Contains(view, cfg.ExaAPIKey) {
 		t.Fatal("blocked saved key is not clearly indicated")
 	}
 }

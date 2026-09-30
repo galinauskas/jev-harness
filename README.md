@@ -43,7 +43,6 @@ To opt into the **experimental Docker sandbox**, toggle it with `x` in `/setting
 | `/attach <path>` | Put a staged file into your draft; paths may contain spaces |
 | `/compact` | Summarise older context now |
 | `/recover` | Acknowledge interrupted work after reviewing its state |
-| `/providers [names]` | View or save this project's permitted providers |
 | `/settings` | Configure roles, models, credentials and interface preferences |
 | `/stats` | Show the session ID, models, usage and reported cost |
 
@@ -63,14 +62,9 @@ Each role defines its name, criteria, provider and model ID. Jev selects a role 
 
 Automatic classification sends the current prompt and recent conversation text to OpenRouter. The selected answering provider receives the conversation context and tool results. One role or a pinned role bypasses classification.
 
-For example, limit the current project to DeepSeek:
+Configure providers in `/settings` → Providers. Each provider has an On/Off toggle for the current project; API keys and the search-provider choice are saved in the same tab. Settings prevent disabling the last provider used by your roles. **Restore providers** enables all providers for the current project and repairs restrictions saved by older versions.
 
-```text
-/providers deepseek
-/role direct
-```
-
-Define the `direct` role with provider `deepseek` first. Forbidden providers are excluded from classification choices and fallbacks. If several permitted direct-provider roles require classification while OpenRouter is forbidden, pin a role explicitly. This policy is saved in the user configuration under the canonical project directory; repositories cannot change it.
+To use only DeepSeek, first define a role with provider `deepseek` in the Roles tab, then enable DeepSeek and disable the other chat providers in Providers. When OpenRouter is disabled, automatic classification is skipped and the enabled default role is used (or the first enabled role if the default is disabled). `/role <name>` still pins a specific role. Disabled providers are excluded from classification choices and fallbacks. Project provider settings are saved under the canonical project directory in the user configuration; repositories cannot change them.
 
 A saved key takes priority over its environment variable. Configure masked key fields in `/settings`, or use:
 
@@ -78,12 +72,15 @@ A saved key takes priority over its environment variable. Configure masked key f
 export OPENROUTER_API_KEY='...'
 export DEEPSEEK_API_KEY='...'
 export OPENCODE_GO_API_KEY='...'
-export EXA_API_KEY='...'  # optional web search
+export EXA_API_KEY='...'  # optional Exa web search
+export BRAVE_API_KEY='...'  # optional Brave web search
 ```
 
-With an Exa key configured, models with tools enabled can call `web_search` using the [Exa Search API](https://exa.ai/docs/reference/search). Set the masked Exa key in `/settings` → Providers → Exa API key, or export `EXA_API_KEY`; the saved `exa_api_key` overrides the environment. Search returns titles, URLs, publication dates and highlights, defaults to five results (maximum ten), and supports `include_domains` / `exclude_domains`. It works in all modes, including inspect, without Docker.
+Models with tools enabled can call `web_search` using [Exa](https://exa.ai/docs/reference/search) or [Brave Web Search](https://api-dashboard.search.brave.com/api-reference/web/search/get). Choose `/settings` → Providers → Search provider, and set the matching masked API key there or export `EXA_API_KEY` / `BRAVE_API_KEY`. Saved `exa_api_key` / `brave_api_key` values override the environment. The `search_provider` config field accepts `exa` or `brave`; older configs default to Exa. Only the selected provider is used, without automatic fallback.
 
-Exa receives the search query and domain filters through a fixed HTTPS endpoint in the host process. Search results are untrusted data; the model should cite their URLs. Credentials stay outside tool arguments and containers. The provider allowlist also controls Exa: new default configurations permit it, but existing explicit allowlists must include `exa` (for example, `/providers openrouter deepseek opencode-go exa`). Omitting `exa` disables the tool even when a key is present. `/providers` reports effective search availability, and settings mark saved keys blocked by policy. The system prompt describes the available search capability and directs models to use it for current information such as weather. Search cost is recorded under `exa:web_search` and counts toward the turn spending budget; unknown cost stops further requests when a cost budget is enabled.
+Search returns titles, URLs, publication dates when available, and highlights/snippets, defaults to five results (maximum ten), and supports `include_domains` / `exclude_domains`. Brave converts bare domain filters to search operators and limits the complete query to 600 characters and 75 words. It works in all modes, including inspect, without Docker.
+
+The selected provider receives the search query and domain filters through a fixed HTTPS endpoint in the host process. Search results are untrusted data; the model should cite their URLs. Credentials stay outside tool arguments and containers. Provider toggles in `/settings` → Providers control both search services. Enable the selected provider there; settings mark disabled keys clearly. Existing project restrictions remain visible in the toggles and can be repaired with **Restore providers**. The system prompt describes the available search capability and directs models to use it for current information such as weather. Search usage is recorded under `exa:web_search` or `brave:web_search` and counts toward the turn spending budget. Brave does not report per-request dollar cost; unknown cost stops further requests when a cost budget is enabled.
 
 Saved credentials remain in a private 0600 config file. That file and host credential directories are outside the tool environment. Known provider credentials and secret-valued environment variables are redacted before persistence and transmission. This does not discover every secret; keep sensitive data out of the selected workspace.
 
@@ -145,7 +142,7 @@ This makes real, billed provider requests. Each JSONL case contains `id`, `promp
 
 The [screenshot gallery](screenshots/README.md) shows the earlier routing showcase. Its routing decisions, replies, timings and usage are illustrative, and its tool/approval screens predate the staged-workspace controls.
 
-Exa request, error, cancellation, credential and policy tests use local mock servers. To make one billable live search with your own key:
+Exa and Brave request, error, cancellation, credential, settings selection and policy tests use local mock servers. To make one billable live search with your own key:
 
 ```sh
 JEV_EXA_TEST=1 go test ./internal/tools -run '^TestLiveExa$' -v

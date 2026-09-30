@@ -22,7 +22,6 @@ var slashCommands = []commandSuggestion{
 	{"/attach", "Attach a workspace file to your draft"},
 	{"/compact", "Summarise context now"},
 	{"/recover", "Acknowledge an interrupted session after review"},
-	{"/providers", "View or set permitted providers for this project"},
 	{"/name", "Rename the current session"},
 	{"/doctor", "Check sandbox availability"},
 	{"/settings", "Edit configuration"},

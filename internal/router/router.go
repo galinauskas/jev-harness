@@ -20,6 +20,7 @@ const (
 	SourceThreshold Source = "threshold" // below threshold -> default role
 	SourceError     Source = "jev-error" // Decide failed -> default role
 	SourceSingle    Source = "single"    // only one role configured
+	SourceDefault   Source = "default"   // classifier disabled -> enabled default role
 	SourcePinned    Source = "pinned"    // /role <name>
 )
 
@@ -149,10 +150,14 @@ func (r *Router) RouteProject(ctx context.Context, cwd string, state State) Deci
 		}
 	}
 	if len(cfg.Roles) == 0 {
-		return Decision{Source: SourceError, Err: errors.New("no provider permitted by project policy")}
+		return Decision{Source: SourceError, Err: errors.New("no role provider enabled; restore providers in /settings → Providers")}
 	}
 	if len(cfg.Roles) > 1 && !cfg.ProviderAllowed(cwd, "openrouter") {
-		return Decision{Source: SourceError, Err: errors.New("automatic classification requires OpenRouter; pin a permitted role")}
+		role, ok := cfg.RoleByName(cfg.DefaultRole)
+		if !ok {
+			role = cfg.Roles[0]
+		}
+		return Decision{Role: role, Source: SourceDefault}
 	}
 	return New(r.client, cfg).Route(ctx, state)
 }

@@ -15,7 +15,7 @@ import (
 type Executor struct {
 	DockerSandbox        bool
 	CompactCommandOutput bool
-	WebSearch            *Exa
+	WebSearch            *WebSearch
 	Workspace            *workspace.Workspace
 	Mode, Image          string
 	Output               func(string)
@@ -41,7 +41,7 @@ func (e *Executor) Prepare(name string, args json.RawMessage) (Prepared, error) 
 		if err != nil {
 			return p, err
 		}
-		p.Review = "Search web via Exa: " + a.Query
+		p.Review = "Search web via " + e.WebSearch.provider + ": " + a.Query
 	case "search_files":
 		p.Review = "Search staged workspace"
 	case "read_command_output":

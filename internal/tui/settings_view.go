@@ -25,12 +25,29 @@ func (s settingsModel) rows() []settingRow {
 	case settingsContext:
 		return []settingRow{{"Compaction", "Compaction threshold", s.compactionLabel(), "Summarise earlier context at this percentage; 0 disables compaction.", "c"}}
 	case settingsProviders:
-		return []settingRow{
+		rows := []settingRow{
 			{"API keys", "OpenRouter API key", keyStatus(s.cfg.APIKey, "OPENROUTER_API_KEY"), "Saved key overrides OPENROUTER_API_KEY. Leave blank to use the environment key.", "key0"},
 			{"API keys", "DeepSeek API key", keyStatus(s.cfg.DeepSeekAPIKey, "DEEPSEEK_API_KEY"), "Saved key overrides DEEPSEEK_API_KEY. Leave blank to use the environment key.", "key1"},
 			{"API keys", "OpenCode Go API key", keyStatus(s.cfg.OpenCodeGoAPIKey, "OPENCODE_GO_API_KEY"), "Saved key overrides OPENCODE_GO_API_KEY. Leave blank to use the environment key.", "key2"},
-			{"Web search", "Exa API key", s.exaPolicyLabel() + keyStatus(s.cfg.ExaAPIKey, "EXA_API_KEY"), "Leave blank to use EXA_API_KEY. /providers controls search availability.", "key3"},
+			{"Web search", "Exa API key", s.searchPolicyLabel("exa") + keyStatus(s.cfg.ExaAPIKey, "EXA_API_KEY"), "Leave blank to use EXA_API_KEY. Enable Exa below to use it for search.", "key3"},
+			{"Web search", "Brave API key", s.searchPolicyLabel("brave") + keyStatus(s.cfg.BraveAPIKey, "BRAVE_API_KEY"), "Leave blank to use BRAVE_API_KEY. Enable Brave below to use it for search.", "key4"},
+			{"Web search", "Search provider", s.cfg.WebSearchProvider(), "Choose Exa or Brave for web_search. The selected provider needs a key and must be enabled below.", "search-provider"},
 		}
+		scope := "Enabled providers"
+		if s.cwd != "" {
+			scope += " (this project)"
+		}
+		for _, p := range []struct{ id, label, hint string }{
+			{"openrouter", "OpenRouter", "Enable OpenRouter models and automatic routing. Off: use an enabled default role."},
+			{"deepseek", "DeepSeek", "Enable roles that use DeepSeek."},
+			{"opencode-go", "OpenCode Go", "Enable roles that use OpenCode Go."},
+			{"exa", "Exa", "Enable Exa web search when selected above."},
+			{"brave", "Brave", "Enable Brave web search when selected above."},
+		} {
+			rows = append(rows, settingRow{scope, p.label, settingOn(s.cfg.ProviderAllowed(s.cwd, p.id)), p.hint, "provider:" + p.id})
+		}
+		rows = append(rows, settingRow{scope, "Restore providers", "Enable all", "Restore all providers for this project, including restrictions saved by older versions.", "restore-providers"})
+		return rows
 	case settingsRoles:
 		rows := make([]settingRow, 0, len(s.cfg.Roles))
 		for _, role := range s.cfg.Roles {
@@ -147,6 +164,16 @@ func (s settingsModel) View() string {
 			}
 			content = append(content, label, value, "")
 		}
+	case sSearchProvider:
+		section, hint = "Search provider", "Choose which provider handles web_search."
+		footer = "↑↓ or Tab select · Enter save · Esc cancel"
+		for i, provider := range []string{"exa", "brave"} {
+			label := provider
+			if provider == s.cfg.WebSearchProvider() {
+				label += " (current)"
+			}
+			content = append(content, settingsRow(label, "", contentWidth, i == s.choiceCursor))
+		}
 	case sDefaultRole:
 		section, hint = "Default role", "Use this role when routing confidence is below the threshold."
 		footer = "↑↓ or Tab select · Enter save · Esc cancel"
@@ -191,7 +218,7 @@ func (s settingsModel) View() string {
 		}
 	} else if s.mode == sRoleForm || s.mode == sValueForm {
 		active = s.focus*3 + 2
-	} else if s.mode == sDefaultRole {
+	} else if s.mode == sDefaultRole || s.mode == sSearchProvider {
 		active = s.choiceCursor + 1
 	} else if s.mode == sHelp {
 		active = min(s.helpCursor+1, len(content)-1)
@@ -318,13 +345,10 @@ func keyStatus(saved, env string) string {
 	return dimStyle.Render("Not configured")
 }
 
-func (s settingsModel) exaPolicyLabel() string {
-	status := s.cfg.ExaSearchStatus("")
-	if s.ag != nil {
-		status = s.ag.WebSearchStatus()
-	}
-	if strings.HasPrefix(status, "disabled") {
-		return warnStyle.Render("disabled by /providers · ")
+func (s settingsModel) searchPolicyLabel(provider string) string {
+	allowed := s.cfg.ProviderAllowed(s.cwd, provider)
+	if !allowed {
+		return warnStyle.Render("Disabled in settings · ")
 	}
 	return ""
 }
@@ -375,10 +399,13 @@ func (s settingsModel) listFooter(width int) string {
 	rows := s.rows()
 	if len(rows) > 0 {
 		row := rows[s.selectedRow()]
-		if row.action == "default" {
+		if row.action == "restore-providers" {
+			action = "restore"
+		}
+		if row.action == "default" || row.action == "search-provider" {
 			action = "choose"
 		}
-		if row.action == "t" || row.action == "b" || row.action == "x" || strings.HasPrefix(row.action, "status") {
+		if row.action == "t" || row.action == "b" || row.action == "x" || strings.HasPrefix(row.action, "status") || strings.HasPrefix(row.action, "provider:") {
 			action = "toggle"
 		}
 	}

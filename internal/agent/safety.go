@@ -34,7 +34,7 @@ func (a *Agent) EnsureWorkspace() error {
 		dir = session.DefaultStore().WorkspaceDir(a.sessionID)
 	}
 	var err error
-	a.work, err = workspace.Open(a.cwd, dir, a.cfg.APIKey, a.cfg.DeepSeekAPIKey, a.cfg.OpenCodeGoAPIKey, a.cfg.ExaAPIKey)
+	a.work, err = workspace.Open(a.cwd, dir, a.cfg.APIKey, a.cfg.DeepSeekAPIKey, a.cfg.OpenCodeGoAPIKey, a.cfg.ExaAPIKey, a.cfg.BraveAPIKey)
 	return err
 }
 func (a *Agent) PendingTool() string               { return a.saved.PendingTool }
@@ -77,7 +77,7 @@ func (a *Agent) Attach(path string) (string, error) {
 	return (&tools.Executor{Workspace: a.work}).Attach(path)
 }
 func (a *Agent) redactor() redact.Redactor {
-	return redact.New(a.cfg.APIKey, a.cfg.DeepSeekAPIKey, a.cfg.OpenCodeGoAPIKey, a.cfg.ExaAPIKey)
+	return redact.New(a.cfg.APIKey, a.cfg.DeepSeekAPIKey, a.cfg.OpenCodeGoAPIKey, a.cfg.ExaAPIKey, a.cfg.BraveAPIKey)
 }
 func (a *Agent) safeHistory() []openrouter.Message {
 	msgs := a.History()
@@ -253,7 +253,7 @@ func (a *Agent) ManualCompact(ctx context.Context) <-chan Event {
 			role, _ = a.cfg.RoleByName(a.cfg.DefaultRole)
 		}
 		if !a.cfg.ProviderAllowed(a.cwd, role.Backend()) {
-			a.send(ch, Event{Kind: Error, Text: "provider denied by project policy"})
+			a.send(ch, Event{Kind: Error, Text: "provider disabled; enable it in /settings → Providers"})
 			return
 		}
 		a.usedTokens, a.usedCost, a.costUnknown = 0, 0, false

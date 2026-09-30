@@ -9,7 +9,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"jevharness/internal/config"
 	"jevharness/internal/redact"
 	"jevharness/internal/session"
 	"jevharness/internal/tools"
@@ -232,32 +231,6 @@ func (c chatModel) safetyCommand(text string) (chatModel, tea.Cmd, bool) {
 		}
 		c.status = "Session renamed"
 		return c, nil, true
-	case "/providers":
-		if len(parts) < 2 {
-			list := c.cfg.Safety.AllowedProviders
-			if p, ok := c.cfg.Safety.Projects[c.cwd]; ok {
-				list = p
-			}
-			c.status = "Permitted providers: " + strings.Join(list, ", ") + "; web search: " + c.cfg.ExaSearchStatus(c.cwd) + "; auto routing sends prompt/context to OpenRouter"
-			return c, nil, true
-		}
-		cfg := c.cfg
-		cfg.Safety.Projects = map[string][]string{}
-		for path, list := range c.cfg.Safety.Projects {
-			cfg.Safety.Projects[path] = append([]string(nil), list...)
-		}
-		cfg.Safety.Projects[c.cwd] = strings.Fields(strings.ReplaceAll(strings.Join(parts[1:], " "), ",", " "))
-		if err := cfg.Validate(); err != nil {
-			return fail(err)
-		}
-		if err := config.Save(cfg); err != nil {
-			return fail(err)
-		}
-		c.ag.SetConfig(cfg)
-		c.setConfig(cfg)
-		c.yolo = false
-		c.status = "Project provider policy saved"
-		return c, nil, true
 	case "/doctor":
 		if !c.cfg.Safety.DockerSandbox {
 			return c, func() tea.Msg {
@@ -338,7 +311,7 @@ func (c chatModel) safetyCommand(text string) (chatModel, tea.Cmd, bool) {
 	return c, nil, false
 }
 func (c *chatModel) snapshot() session.Session {
-	r := redact.New(c.cfg.APIKey, c.cfg.DeepSeekAPIKey, c.cfg.OpenCodeGoAPIKey, c.cfg.ExaAPIKey)
+	r := redact.New(c.cfg.APIKey, c.cfg.DeepSeekAPIKey, c.cfg.OpenCodeGoAPIKey, c.cfg.ExaAPIKey, c.cfg.BraveAPIKey)
 	return session.Session{Version: 1, ID: c.sessionID, Title: c.sessionTitle, CWD: c.cwd, Updated: c.sessionUpdated, Messages: c.ag.SafeHistory(), Transcript: r.Text(c.transcript.String()), Pinned: c.ag.Pinned, TokensIn: c.tokensIn, TokensOut: c.tokensOut, Cost: c.cost, Turns: c.turns, ContextUsed: c.contextUsed, ContextModel: c.contextModel, Models: copyModels(c.models), Running: false, PendingTool: c.ag.PendingTool(), Mode: c.ag.Mode()}
 }
 func copyModels(models map[string]session.ModelUsage) map[string]session.ModelUsage {

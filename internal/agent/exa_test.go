@@ -16,8 +16,12 @@ type exaTransport func(*http.Request) (*http.Response, error)
 
 func (f exaTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestExaAgentLoopPolicyAndBudget(t *testing.T) {
+func TestExaAgentLoopPolicyAndBudget(t *testing.T)   { testSearchAgentLoopPolicyAndBudget(t, "exa") }
+func TestBraveAgentLoopPolicyAndBudget(t *testing.T) { testSearchAgentLoopPolicyAndBudget(t, "brave") }
+
+func testSearchAgentLoopPolicyAndBudget(t *testing.T, provider string) {
 	t.Setenv("EXA_API_KEY", "")
+	t.Setenv("BRAVE_API_KEY", "")
 	for _, tc := range []struct {
 		name                               string
 		key, allowed, disableTools, budget bool
@@ -32,10 +36,19 @@ func TestExaAgentLoopPolicyAndBudget(t *testing.T) {
 			searches, completions := 0, 0
 			original := http.DefaultTransport
 			http.DefaultTransport = exaTransport(func(r *http.Request) (*http.Response, error) {
-				if r.URL.Host != "api.exa.ai" {
+				if r.URL.Host != "api.exa.ai" && r.URL.Host != "api.search.brave.com" {
 					return original.RoundTrip(r)
 				}
 				searches++
+				if provider == "brave" {
+					if r.URL.Host != "api.search.brave.com" || r.URL.Path != "/res/v1/web/search" || r.Header.Get("X-Subscription-Token") != "saved-brave-secret" {
+						t.Error("wrong Brave request")
+					}
+					return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"type":"search","web":{"results":[{"title":"Go","url":"https://go.dev","description":"Go release"}]}}`))}, nil
+				}
+				if r.URL.Host != "api.exa.ai" {
+					t.Error("selected Exa but called Brave")
+				}
 				if r.URL.Path != "/search" || r.Header.Get("x-api-key") != "saved-exa-secret" {
 					t.Error("wrong Exa request")
 				}
@@ -64,7 +77,7 @@ func TestExaAgentLoopPolicyAndBudget(t *testing.T) {
 					t.Errorf("web_search offered=%t expected=%t", found, enabled)
 				}
 				data, _ := json.Marshal(req)
-				if strings.Contains(string(data), "saved-exa-secret") {
+				if strings.Contains(string(data), "saved-exa-secret") || strings.Contains(string(data), "saved-brave-secret") {
 					t.Error("key sent to chat provider")
 				}
 				if completions == 1 {
@@ -89,8 +102,19 @@ func TestExaAgentLoopPolicyAndBudget(t *testing.T) {
 				}
 			})
 			defer s.Close()
+			a.cfg.SearchProvider = provider
+			// Both keys exist: only the selected provider may be used.
 			if tc.key {
+				if provider == "brave" {
+					a.cfg.BraveAPIKey = "saved-brave-secret"
+				} else {
+					a.cfg.ExaAPIKey = "saved-exa-secret"
+				}
+			}
+			if provider == "brave" {
 				a.cfg.ExaAPIKey = "saved-exa-secret"
+			} else {
+				a.cfg.BraveAPIKey = "saved-brave-secret"
 			}
 			if !tc.allowed {
 				a.cfg.Safety.Projects = map[string][]string{a.cwd: {"openrouter"}}
@@ -121,7 +145,11 @@ func TestExaAgentLoopPolicyAndBudget(t *testing.T) {
 				t.Fatalf("search requests=%d expected=%d", searches, wantSearches)
 			}
 			if tc.budget {
-				if !failed || a.usedCost != 0.005 || a.saved.PendingTool != "" || completions != 1 {
+				costOK := a.usedCost == 0.005
+				if provider == "brave" {
+					costOK = a.costUnknown && a.usedCost == 0
+				}
+				if !failed || !costOK || a.saved.PendingTool != "" || completions != 1 {
 					t.Fatal("budget failed to stop a second paid search", a.usedCost, a.saved.PendingTool, completions)
 				}
 			} else if tc.disableTools {

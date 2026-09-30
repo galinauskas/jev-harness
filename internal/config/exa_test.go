@@ -36,7 +36,7 @@ func TestExaSearchStatus(t *testing.T) {
 		t.Fatal("configured search reported unavailable")
 	}
 	cfg.Safety.Projects = map[string][]string{"/project": {"openrouter"}}
-	if cfg.ExaSearchStatus("/project") != "disabled by provider policy (add exa with /providers)" {
+	if cfg.ExaSearchStatus("/project") != "disabled in settings (enable exa in /settings → Providers)" {
 		t.Fatal("project restriction not explained")
 	}
 }

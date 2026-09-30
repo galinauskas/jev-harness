@@ -21,7 +21,7 @@ type Tool struct {
 
 // All returns defs and executors for every tool. Paths resolve relative to
 // dir, inside an already scoped staged workspace.
-func All(dir string, webSearch ...*Exa) []Tool {
+func All(dir string, webSearch ...*WebSearch) []Tool {
 	mk := func(name, desc string, params json.RawMessage,
 		run func(dir string, ctx context.Context, args json.RawMessage) (string, error)) Tool {
 		var def openrouter.ToolDef
@@ -107,7 +107,7 @@ func All(dir string, webSearch ...*Exa) []Tool {
 }
 
 // Find returns the named tool among All(dir).
-func Find(dir, name string, webSearch ...*Exa) (Tool, bool) {
+func Find(dir, name string, webSearch ...*WebSearch) (Tool, bool) {
 	for _, t := range All(dir, webSearch...) {
 		if t.Def.Function.Name == name {
 			return t, true

@@ -27,6 +27,8 @@ type Role struct {
 // Config is the on-disk application configuration.
 type Config struct {
 	CompactCommandOutput bool             `json:"compact_command_output,omitempty"`
+	SearchProvider       string           `json:"search_provider,omitempty"`
+	BraveAPIKey          string           `json:"brave_api_key,omitempty"`
 	ExaAPIKey            string           `json:"exa_api_key,omitempty"`
 	Safety               SafetyConfig     `json:"safety"`
 	Limits               Limits           `json:"limits"`
@@ -68,7 +70,7 @@ func (c *Config) ApplyDefaults() {
 		c.Safety.SandboxImage = "jev-harness-sandbox:1"
 	}
 	if c.Safety.AllowedProviders == nil {
-		c.Safety.AllowedProviders = []string{"openrouter", "deepseek", "opencode-go", "exa"}
+		c.Safety.AllowedProviders = []string{"openrouter", "deepseek", "opencode-go", "exa", "brave"}
 	}
 	if c.Limits.OutputTokens == 0 {
 		c.Limits.OutputTokens = 8192
@@ -214,6 +216,9 @@ func (c Config) RoleByName(name string) (Role, bool) {
 // joined by "; " so the settings form can display it verbatim.
 func (c Config) Validate() error {
 	var errs []string
+	if c.SearchProvider != "" && c.SearchProvider != "exa" && c.SearchProvider != "brave" {
+		errs = append(errs, "search_provider must be exa or brave")
+	}
 	if c.Safety.Mode != "" && c.Safety.Mode != "inspect" && c.Safety.Mode != "develop" && c.Safety.Mode != "autonomous" {
 		errs = append(errs, "mode must be inspect, develop or autonomous")
 	}
@@ -228,7 +233,7 @@ func (c Config) Validate() error {
 	}
 	for _, list := range append([][]string{c.Safety.AllowedProviders}, projectProviderLists(c.Safety.Projects)...) {
 		for _, provider := range list {
-			if provider != "openrouter" && provider != "deepseek" && provider != "opencode-go" && provider != "exa" {
+			if provider != "openrouter" && provider != "deepseek" && provider != "opencode-go" && provider != "exa" && provider != "brave" {
 				errs = append(errs, "unknown allowed provider: "+provider)
 			}
 		}
@@ -301,6 +306,8 @@ func (c Config) ProviderKey(provider string) string {
 	switch provider {
 	case "openrouter", "":
 		return c.Key()
+	case "brave":
+		saved, env = c.BraveAPIKey, "BRAVE_API_KEY"
 	case "exa":
 		saved, env = c.ExaAPIKey, "EXA_API_KEY"
 	case "deepseek":
@@ -327,9 +334,31 @@ func projectProviderLists(projects map[string][]string) [][]string {
 // ExaSearchStatus explains the effective project capability without revealing keys.
 func (c Config) ExaSearchStatus(cwd string) string {
 	if !c.ProviderAllowed(cwd, "exa") {
-		return "disabled by provider policy (add exa with /providers)"
+		return "disabled in settings (enable exa in /settings → Providers)"
 	}
 	if c.ProviderKey("exa") == "" {
+		return "unavailable: set the Exa key in /settings or EXA_API_KEY"
+	}
+	return "available"
+}
+
+// WebSearchProvider preserves Exa for older configurations.
+func (c Config) WebSearchProvider() string {
+	if c.SearchProvider == "" {
+		return "exa"
+	}
+	return c.SearchProvider
+}
+
+func (c Config) WebSearchStatus(cwd string) string {
+	provider := c.WebSearchProvider()
+	if !c.ProviderAllowed(cwd, provider) {
+		return "disabled in settings (enable " + provider + " in /settings → Providers)"
+	}
+	if c.ProviderKey(provider) == "" {
+		if provider == "brave" {
+			return "unavailable: set the Brave key in /settings or BRAVE_API_KEY"
+		}
 		return "unavailable: set the Exa key in /settings or EXA_API_KEY"
 	}
 	return "available"
