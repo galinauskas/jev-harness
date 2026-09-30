@@ -1,43 +1,65 @@
-# Code review — 30 September 2026
+# Project review, 30 September 2026
 
-Reviewed the CLI, configuration, routing, all three provider clients, streaming parsers, agent loop, context compaction, session persistence, local tools and terminal interface. This follows the 28 September review and covers the newly added features.
+**Not recommended for use.** The current code has retained regression tests, staged file edits, reviewed apply and an optional offline Docker shell. The default local shell still has host filesystem and network access. This review does not establish live provider compatibility or a routing advantage.
 
-## Findings and fixes
+This update replaces the earlier review, whose Docker-default and screenshot descriptions no longer matched the project. Reviewed commit `8412bc9` and the current CLI, provider configuration, routing, search integration, execution policy, staged apply/recovery, session handling and TUI. This was a source review and local verification, not an independent security audit. No runtime behaviour was changed for this documentation update.
 
-- Saved transcripts could replay terminal commands from altered session files. Resumption now preserves only bounded colour and emphasis sequences; clipboard, cursor and other terminal controls are removed.
-- Background context lookups could read agent configuration while settings replaced it. Each lookup now captures its provider client before starting, and replies from an older settings generation are ignored. Context windows and token-estimate calibration are kept separate by provider. Changed or deleted roles refresh the displayed mapping.
-- OpenCode Go's native streams lacked the per-tool argument bound applied to chat completions. A shared validator now enforces complete calls, unique IDs, valid JSON, at most 128 calls and a 3 MiB argument limit across all protocols. Messages fragments are bounded before concatenation. Failed calls never reach approval or execution.
-- Saved native provider history was only shallow-copied. History snapshots and restored sessions now detach native JSON buffers as well as tool-call slices.
-- Configuration and session reads now share a bounded regular-file reader. On Unix it rejects symbolic links and opens without blocking on named pipes before checking the file type. Atomic saves and private permissions remain in place.
-- A stale error status could prevent a successful save-and-quit after an aborted turn. Quitting now depends on the current save result.
-- Repeated routing choices were hidden, including changes between automatic and pinned routing. Every turn now shows its source and provider; a pin is labelled `pinned`, rather than displaying an invented confidence measurement.
-- OpenRouter streams explicitly request usage. Missing routing credentials fail before an HTTP request. Provider keys remain excluded from shell-tool environments, and authenticated requests reject redirects.
-- Split chat commands, event handling and context lookups into separate files. Consolidated private-file reads and stream tool validation. Updated project-owned prose to British spelling while preserving protocol and library identifiers.
-- Refreshed 23 interface images and the routing overview, including providers, command suggestions, sessions, stats, compaction and the yellow approval panel. All decisions, replies, timings and usage in the gallery are illustrative; no live model request or tool execution was used for those captures.
+## Open findings
 
-## Verification
+### P1. CLI paths omit the saved Brave key from redaction
 
-The existing suite passed with `go test -race ./...` before changes. The full suite and targeted regression checks passed again after the fixes and file split. Local HTTP mocks covered direct DeepSeek, all three OpenCode Go protocols, tool/reasoning history replay, provider key changes, cancellation, usage accounting, session resumption and compaction failures. Additional checks covered transcript controls, detached native history, context/settings concurrency, stale metadata replies, oversized native arguments, duplicate calls, named pipes, symlinks and bounded private-file reads.
+[The CLI route path](cmd/jev/main.go#L131) supplies OpenRouter, DeepSeek, OpenCode Go and Exa saved keys to `redact.New` for `jev route`, but omits `cfg.BraveAPIKey`. [The dependency-preparation call](cmd/jev/main.go#L78) makes the same omission when calling `PrepareSandbox`.
 
-The rebuilt executable passed isolated CLI and real PTY terminal smoke checks: single-role routing, invalid arguments, startup, settings save, input style change, stats, session browsing, missing-key failure, saved-turn resumption and clean exit. Saved config and session files were verified as 0600. Screenshot generation checked terminal row and width bounds; all 24 PNG files were decoded and verified, with representative captures inspected visually.
+If a Brave key exists only in the saved config and appears in a route prompt, the CLI can send it to the OpenRouter classifier. If it appears in a dependency lockfile, the preparation check can miss it and pass that file to the Docker build. Environment keys remain covered by the redactor's environment scan. The main agent, workspace snapshot and saved transcript paths already include the Brave saved key.
 
-As requested in the previous review, test files were removed after verification: 13 existing files, four temporary security/concurrency regression files and one temporary showcase fixture. Verification copies were retained outside the project. Subsequent `go test ./...` checks package compilation only.
+Pass `cfg.BraveAPIKey` in both CLI paths and retain regression coverage for a config-only key. Until then, keep credentials out of prompts and lockfiles. This finding follows the call sites and redactor implementation; no real credential was sent during review.
 
-Final checks:
+### P2. CLI diagnostics report the wrong search provider
 
-- `go build -o jev ./cmd/jev` passed.
-- `go vet ./...`, formatting checks and `go mod verify` passed.
-- `govulncheck` reported no known vulnerabilities.
-- CLI/TUI smoke checks passed.
+[CLI doctor](cmd/jev/main.go#L99) hardcodes Exa key and policy checks and prints `Web search: exa`, even if `search_provider` is `brave`. A Brave-only setup can therefore appear unconfigured. The same diagnostic always describes routing as sending data to OpenRouter, although pinned/single-role or disabled-classifier paths bypass classification.
 
-Live authenticated provider completions were not exercised. DeepSeek metadata and OpenCode Go endpoint/session requirements were checked against their provider documentation; the Go model limits remain a dated bundled catalog snapshot. This review does not establish measured routing speed, accuracy or production readiness.
+Use `WebSearchProvider`, `ProviderKey` and the effective project policy when reporting diagnostics. Providers settings and the agent's search selection already use the selected service. The README calls out the current diagnostic limitation.
 
-**Historical limitation of the earlier showcase, superseded by the implementation below:** the harness then had no operating-system sandbox. Approved tools can access local files and execute commands, and YOLO mode skips approval. Keep trials in a throwaway workspace with separate, limited API keys, then revoke every trial key and create new ones. Saved sessions include conversation and tool output; remove the private session files when discarding a trial. Unix process-group cancellation covers ordinary child processes; platform-specific handling and private-file flags are more limited outside Unix.
+### P2. Recovery acknowledgement does not require a diff review
 
-## Staged-workspace implementation — 30 September 2026
+The TUI blocks ordinary task submission and apply after resuming an interrupted session. However, [the recovery handler](internal/tui/safety_commands.go#L102) clears the recovery flag without checking whether `/changes` ran. A user can resume, acknowledge and submit another task without inspecting partial local-shell changes. Completed tools are not automatically replayed, and apply still has its separate review check.
 
-The harness now uses scoped staged file access and an offline Docker shell backend, central inspect/develop/autonomous policies, reviewed apply, conflict checks and selective undo. Provider policy is enforced before classification and fallback. Known credentials are redacted, progress is checkpointed during work, tools have durable lifecycle records, and resumed interrupted sessions require reconciliation. Added steering/follow-up input, attachments/search, manual compaction, session forks/lifecycle commands, CLI diagnostics, optional offline Go dependency preparation and a real-request evaluation runner.
+Require review of current staged state before recovery acknowledgement, or describe `/recover` as acknowledgement alone. The README now states the actual behaviour and tells users to inspect first.
 
-The regression suite is retained from this point onward. The prior findings above about removed tests and unrestricted host tools describe the earlier showcase, not the current implementation. The root application already intercepted Ctrl+C correctly; lower-level handlers and OS signal handling now use the orderly shutdown path too.
+## What the current implementation does
 
-Verification for this implementation covers race-enabled regressions, package build, vet, module integrity and live Docker checks of blocked host paths, absent credentials, blocked outbound network, staged writes, nonzero command results and timeout handling. The full project suite also passes offline inside the dependency-prepared sandbox; compile/test execution uses bounded executable tmpfs. Terminal smoke checks cover commands, ephemeral cleanup and Ctrl+C/SIGTERM shutdown. CI retains both boundary and offline project checks. Live authenticated model completions and representative routing benchmarks remain separate work. SECURITY.md documents the remaining boundary limits, including non-atomic multi-file apply, races with concurrent external editors, plaintext private persistence and reported-cost budgets.
+Roles define criteria, provider and model. Jev classifies each user turn among permitted roles; tool continuations stay on that model. Provider restrictions filter classification choices and fallback roles. Pinned roles bypass classification, and disabling OpenRouter uses an enabled default role. This is implemented routing behaviour, not evidence of better routing decisions.
+
+File tools use a private staged copy and Go's filesystem root boundary. The execution policy denies edits and commands in inspect mode, asks for approval in develop mode and skips per-call approval in autonomous mode. Local shell commands begin in the staged copy but inherit the host environment and can access host paths. Staging is therefore not a shell sandbox.
+
+Docker is experimental and disabled by default. When enabled, it runs commands offline in constrained containers and validates the returned archive before importing changes. Unavailable engines/images do not trigger a local-shell fallback. Explicit image build and Go dependency preparation use network access.
+
+Reviewed apply checks the current diff and project conflicts. Undo refuses to overwrite later edits. Multi-file apply is not atomic, and concurrent external edits can still race with filesystem operations. Sessions retain private plaintext messages, snapshots, logs and undo data. Redaction filters known values; it cannot discover every secret.
+
+Exa and Brave share the web-search tool. The selected provider must have a key and be permitted for the project. Brave's unknown per-request dollar cost stops further requests when a cost budget is active. Compact command output is optional and keeps bounded logs outside the staged project. Settings now group controls into five tabs.
+
+## Verification run
+
+| Check | Result |
+| --- | --- |
+| `go test -race ./...` | Passed across all packages after enabling loopback for local mock servers |
+| `go vet ./...` | Passed |
+| `go mod verify` | Passed |
+| `go build -o /tmp/jev-review ./cmd/jev` | Passed |
+| `TestLiveDockerIsolation` | Passed against the installed local runtime/image |
+| `TestLiveDockerFailureAndTimeoutPreserveBoundary` | Passed |
+| `TestLiveDockerCompactCommandOutput` | Passed |
+| Current TUI render fixtures | Passed 112-column and 34-row bounds for 29 states |
+| PNG generation | 30 images decoded and verified, including the routing overview |
+
+The first restricted test attempt could not bind the local mock HTTP listener. The complete race suite passed with that environment restriction lifted. The Docker tests checked host-path isolation, absent provider credentials, blocked outbound network, staged writes, original-file preservation, nonzero exits, timeout handling and compact log retrieval. These tests use disposable workspaces.
+
+The gallery renders actual TUI views with deterministic demo state. It makes no model or search requests. Routing confidence, answers, tool output and usage are illustrative. The staged diff and apply captures execute those operations on disposable files. All captures were inspected in a contact sheet, with settings, provider, approval and diff captures also inspected at full size. The renderer and fixture remain in the repository so the gallery can be regenerated.
+
+Not run in this update: authenticated provider completions, billable search, routing evaluation, the full project suite inside the prepared Docker image, a new vulnerability scan, cross-platform trials or interactive PTY smoke tests. Prior results are not treated as fresh verification.
+
+## Work needed before reconsidering use
+
+Fix the CLI credential-filter and diagnostic gaps. Decide whether recovery acknowledgement must enforce a prior diff review. Exercise live authenticated completions and tool continuations for every supported provider/protocol with limited trial credentials. Run held-out routing tasks against a fixed-model baseline and compare task success, latency, cost and accounting completeness.
+
+Keep the local-shell access warning visible. Continue testing staged conflict handling, cancellation and recovery, and verify the experimental Docker path on each supported platform. Passing the current suite does not make the default shell isolated or the project ready for normal coding work.
