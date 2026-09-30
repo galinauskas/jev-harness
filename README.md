@@ -1,110 +1,152 @@
-# Jev model routing showcase
+# Jev harness
 
-A small terminal harness for trying **Jev as a model router**. You give it a task, Jev chooses a role, and the harness sends the task to the model assigned to that role. The point of this project is to see the routing decision, not to build a production coding assistant.
+A terminal coding harness that uses **Jev to route each user turn to a configured model role**. It supports OpenRouter, direct DeepSeek and OpenCode Go, with streamed replies, tool use, context compaction and resumable sessions.
 
-> **Test purposes only. Do not use this harness for real coding work.** It can read and change local files and run shell commands when you approve a tool call. `/yolo` skips those approvals. Use a throwaway workspace and separate, limited API keys. **After trying it, revoke every trial key and create new keys.**
+Agent tools work in a **private staged copy**. File tools use Go's filesystem root boundary. Shell commands run locally in that copy by default, with normal host and network access. Use `/changes` and `/apply` to review and apply staged edits. The optional **Docker sandbox is experimental** and disabled by default.
 
-![Four illustrative routing outcomes in the terminal interface](screenshots/routing-overview.png)
+This is a development release. The retained tests cover the execution and recovery controls; live routing quality and authenticated provider compatibility still require trials with your selected models. Read [SECURITY.md](SECURITY.md) for the boundary and its limits.
 
-## What the showcase demonstrates
+## Start
 
-| Task | Jev's routing result | What to notice |
-| --- | --- | --- |
-| A short, focused question | `basic` → `openai/gpt-4o-mini` | A lightweight model handles a small request. |
-| A task spanning several packages | `complex` → `anthropic/claude-sonnet-4.5` | A more capable model handles a broader request. |
-| An unclear request | Default role after low confidence | A confidence threshold gives the router a predictable fallback. |
-| A manually pinned role | The selected role | You can override automatic routing for a turn. |
-
-The main learning outcome is that **Jev can be a very fast and accurate model router** for this kind of role selection. This repository shows the decision flow and the situations it is meant to handle. It is **not a benchmark**: the screenshots below use illustrative task text, decisions, confidence values, responses, timings, and usage figures. They were rendered in the app without live OpenRouter calls. Run your own trials before drawing conclusions about speed or accuracy for your tasks.
-
-## How routing works
-
-1. Define roles in the settings screen. Each role has a plain English description, a provider, and a model ID. Existing roles default to OpenRouter.
-2. For each new message, the harness asks Jev which role best fits the task. Recent conversation text provides context.
-3. If Jev's confidence is below the chosen threshold, the harness uses the default role.
-4. The selected model handles the message. The terminal shows the role, confidence, provider, model, and any tool approval requests. Every turn shows its routing result; pinned roles are labelled as pinned.
-
-You can also pin a role with `/role <name>` or return to automatic routing with `/role auto`. Type `/` to see commands and keep typing to filter them. Use ↑/↓ to select, Tab to complete, and Esc to dismiss. Enter completes a partial command or runs a fully typed command. Outside command suggestions, Tab cycles through the available roles.
-
-## Screenshots
-
-The images are **illustrative captures of the interface**, not evidence of measured model performance or live API responses.
-
-| Routing | Controls |
-| --- | --- |
-| [Small task → basic](screenshots/02-auto-routing-and-code.png) | [Tool approval](screenshots/06-tool-approval.png) |
-| [Multi-package task → complex](screenshots/03-complex-task-routing.png) | [Roles list](screenshots/08-roles-command.png) |
-| [Low-confidence fallback](screenshots/04-confidence-fallback.png) | [Routing settings](screenshots/12-routing-settings.png) |
-| [Pinned role](screenshots/05-pinned-role.png) | [More screenshots](screenshots/README.md) |
-
-### New in this showcase
-
-Jev remains the focus: define the task criteria, send different requests, and inspect which role wins. The updated interface also lets you:
-
-- [Map roles to different providers](screenshots/22-provider-roles.png): OpenRouter, direct DeepSeek, or OpenCode Go.
-- [Find slash commands while typing](screenshots/17-command-suggestions.png).
-- [Resume a saved conversation](screenshots/18-saved-sessions.png), including its context, pinned role and usage totals.
-- [Inspect session stats](screenshots/19-session-stats.png), including reported routing and chat usage by model.
-- [Set the compaction threshold](screenshots/20-context-settings.png) and [see when context is summarised](screenshots/21-context-compaction.png).
-- [Review tools in the yellow approval panel](screenshots/06-tool-approval.png) above the input.
-
-![Roles mapped to OpenRouter, DeepSeek and OpenCode Go](screenshots/22-provider-roles.png)
-
-## Try it
-
-You need Go 1.26 or newer and an [OpenRouter API key](https://openrouter.ai/keys). The models in the starter configuration are examples; choose models available to your account in `/settings`.
-
-```sh
-git clone https://github.com/galinauskas/jev-harness.git
-cd jev-harness
-export OPENROUTER_API_KEY='your-temporary-key'
-go run ./cmd/jev
-```
-
-Enter a small request, then a broader one, and compare the displayed routing choices. `/roles` shows the role definitions, `/settings` lets you edit them, and `jev route "your task"` prints a routing decision without starting the terminal interface after you build the binary:
+Install Go 1.26+. From this repository:
 
 ```sh
 go build -o jev ./cmd/jev
-./jev route "Explain this Go function"
+./jev doctor
+export OPENROUTER_API_KEY='your-key'
+./jev
 ```
 
-The terminal can also save a key in its private configuration file. A key saved in `/settings` takes priority over `OPENROUTER_API_KEY` and applies immediately; clear the saved field to use the environment variable again. Never commit a key or paste one into screenshots. When finished, revoke each temporary key in its provider console and issue new keys if you continue using those services.
-
-### Direct providers
-
-Open `/settings`, press **g**, and enter the OpenRouter, DeepSeek, and/or OpenCode Go API keys. Each saved key takes priority over its matching environment variable; clear it to use the environment again. Keys are masked in the form and saved in the private config file. Alternatively:
+To opt into the **experimental Docker sandbox**, toggle it with `x` in `/settings` → Appearance, or set `"docker_sandbox": true` inside the config's `safety` object. Install a local Docker runtime such as Docker Desktop, OrbStack or Docker Engine, then run:
 
 ```sh
-export DEEPSEEK_API_KEY='your-deepseek-key'
-export OPENCODE_GO_API_KEY='your-opencode-go-key'
+./jev sandbox build
+./jev sandbox prepare  # optional: preload this project's Go modules
+./jev doctor
 ```
 
-Edit or add a role and set its **Provider** to `openrouter`, `deepseek`, or `opencode-go`. Leave it blank for OpenRouter. Use the provider's native model ID:
+`sandbox build` creates the local tool image from the bundled Dockerfile using an empty build context. `sandbox prepare` downloads this project's Go modules using only root `go.mod` and `go.sum`; repeat it after dependency changes. These explicit setup commands use network access; sandboxed commands remain offline. Relative module replacements and other dependency ecosystems need a trusted custom image with dependencies preinstalled. When enabled, unavailable engines or images fail clearly without falling back to the host shell. Remote Docker engines are rejected.
 
-| Provider | Example model ID | Backend |
-| --- | --- | --- |
-| `openrouter` | `openai/gpt-4o-mini` | OpenRouter chat completions |
-| `deepseek` | `deepseek-flash` | [DeepSeek API](https://api-docs.deepseek.com/) |
-| `opencode-go` | `opencode-go/kimi-k3` | [OpenCode Go API](https://opencode.ai/v2/docs/console/go) |
+`doctor` and `/doctor` report the selected shell backend. They check Docker readiness only when the experimental sandbox is enabled.
 
-Jev automatic routing still uses the OpenRouter key. A single role or a pinned role can run without that key. Provider selection is explicit: an OpenRouter `deepseek/...` model continues to use OpenRouter.
+## Work and review
 
-DeepSeek runs in non-thinking mode with streamed text, tool calls, and token usage. Automatic compaction uses the documented 1M-token context window for `deepseek-flash`, `deepseek-v4-pro`, and the legacy Flash aliases (conservatively treated as 1,000,000 tokens). Unknown model IDs produce a notice and skip automatic compaction. Direct DeepSeek roles also accept a `deepseek/` prefix, which is removed before API requests. Cost is only counted when reported by the provider. OpenRouter, DeepSeek, and OpenCode Go keys are removed from harness shell-tool environments.
+| Command | Behaviour |
+| --- | --- |
+| `/mode inspect` | Read, list and search staged files; use configured web search; mutations and commands are denied |
+| `/mode develop` | Inspect without prompts; approve proposed edits and shell commands |
+| `/mode autonomous` | Allow tools with the configured shell backend without per-call prompts |
+| `/changes [path]` | Review staged diffs, optionally for one file |
+| `/apply [path]` | Apply the currently reviewed changes, with conflict checks |
+| `/undo <path>` | Restore an applied file if no later project or staged edits would be overwritten |
+| `/discard` | Discard staged changes and refresh the copy from your project |
+| `/attach <path>` | Put a staged file into your draft; paths may contain spaces |
+| `/compact` | Summarise older context now |
+| `/recover` | Acknowledge interrupted work after reviewing its state |
+| `/providers [names]` | View or save this project's permitted providers |
+| `/settings` | Configure roles, models, credentials and interface preferences |
+| `/stats` | Show the session ID, models, usage and reported cost |
 
-OpenCode Go uses your subscription API key directly; no OpenCode CLI is required. Set the role provider to `opencode-go` and use a bare model ID or its full `opencode-go/` slug. For example: `opencode-go/kimi-k3`, `opencode-go/glm-5.3-flash`, `opencode-go/minimax-m2.7`, or `opencode-go/gpt-6-luna`. The harness selects Chat Completions, Anthropic Messages, or Responses according to the model, with streamed text, tool approvals, and reported token usage. Native reasoning and tool history are preserved for subsequent requests and saved-session resumes.
+Settings use text-only tabs for Appearance, Routing, Context, Providers and Roles. Use ←/→ to switch tabs, ↑/↓ to select a row, Tab/Shift+Tab to jump between sections (or rows on a single-section page), and Enter/Space to edit or toggle. Tabs remember your selection. Status items toggle directly in Appearance; model, threshold and masked key edits open only the selected field. The bottom help line describes the selected setting. In Roles, use `n` to add, `d` to delete, and `D` to choose the default. Deleting a role requires Enter to confirm; Esc keeps it. Routing also has a default-role chooser. Role edit forms use Tab/Shift+Tab to move between fields and ←/→ or Space to choose a provider. Enter saves and Esc cancels; Esc from the settings list returns to chat. Press `?` for all shortcuts.
 
-Go requests identify this client as `jev-harness/1.0` and send `x-opencode-session`, stable for each conversation (including compaction and session resumes). Automatic compaction uses a bundled snapshot of the [models.dev catalog](https://models.dev/) for known Go models, using the input limit where it is lower than the context limit. Unknown models skip compaction with a notice; catalog updates are needed as models change. Stats count provider-reported costs only.
+The default mode is `develop`. `/yolo` remains an alias for toggling `autonomous`; it changes approvals, never the filesystem or network boundary. Elevated permissions reset when starting, resuming or forking sessions, or changing configuration. `/apply` always requires a current review, even in autonomous mode. Inspect mode permits the user to explicitly apply previously staged work.
 
-Conversations are saved automatically after each completed or aborted turn and on exit. Enter `/session` to browse sessions for the current working directory, use ↑/↓ to select one, and press Enter to resume it with its conversation context, pinned role, and usage totals. Esc returns to the current chat. `/session new` (or `/clear`) starts a fresh conversation while keeping the previous one available in the list. Each launch starts a fresh chat.
+While an answer is running, Enter queues steering for the next model request and Alt+Enter queues a follow-up after the task. Shift+Enter adds a newline. Escape cancels the current turn. Ctrl+C, SIGINT and SIGTERM request an orderly cancellation and save before exit.
 
-Enter `/stats` (or `/session stats`) to show completed turns, input/output token totals, reported cost, models used with per-model request and usage totals, and the last prompt’s context usage. Reported routing, chat/tool-round, and compaction usage is counted, including requests before an aborted turn. Missing provider usage is excluded. The breakdown is saved with the session; older sessions retain their totals without a historical model breakdown.
+Use `@path` in a prompt for an explicit file attachment, or `/attach` for paths containing spaces. Attachments are limited to 64 KiB. `search_files` finds files by glob or searches literal text, with at most 100 matches.
 
-Automatic context compaction summarises earlier conversation when estimated usage reaches a percentage of the selected model’s context window. Open `/settings`, press **c**, and set **1–100%** (default **80%**), or **0** to disable it. The check runs before each chat/tool request using model context metadata and token estimates calibrated by reported usage. The current user request and recent tool calls remain intact; the full visible transcript stays available, and saved sessions resume from the summary. Summarisation uses the selected model and its usage is included in session totals. If context metadata is unavailable, a notice appears and the conversation continues. A failed summary preserves the original context and stops the turn so it can be retried.
+The root `AGENTS.md`, when present in the staged copy, supplies repository guidance. Repository text, tool output and model responses cannot broaden the capability policy. Executable project extensions, MCP configuration and package scripts are not loaded automatically.
 
-Sessions are private JSON files in `$XDG_CONFIG_HOME/jev-harness/sessions` (or `~/.config/jev-harness/sessions`). They include messages and tool output; delete these files when you want to discard saved conversations.
+## Routing and data destinations
 
-## Scope
+Each role defines its name, criteria, provider and model ID. Jev selects a role for each user turn; tool continuations stay on that model. `/role <name>` pins a role and `/role auto` restores automatic routing. `/roles` shows the mapping.
 
-This harness exists to make Jev routing easy to inspect. It includes a chat interface and local file and shell tools so you can see an end-to-end turn, but it has no operating-system sandbox. Approving a tool call allows it to act on your machine. Avoid real projects and sensitive files, and keep `/yolo` off during trials.
+Automatic classification sends the current prompt and recent conversation text to OpenRouter. The selected answering provider receives the conversation context and tool results. One role or a pinned role bypasses classification.
 
-The code review and verification notes are in [REVIEW.md](REVIEW.md). Race-enabled regression checks and CLI/TUI smoke checks were run during the review. As in the previous review, test files were removed after verification; `go test ./...` now checks package compilation.
+For example, limit the current project to DeepSeek:
+
+```text
+/providers deepseek
+/role direct
+```
+
+Define the `direct` role with provider `deepseek` first. Forbidden providers are excluded from classification choices and fallbacks. If several permitted direct-provider roles require classification while OpenRouter is forbidden, pin a role explicitly. This policy is saved in the user configuration under the canonical project directory; repositories cannot change it.
+
+A saved key takes priority over its environment variable. Configure masked key fields in `/settings`, or use:
+
+```sh
+export OPENROUTER_API_KEY='...'
+export DEEPSEEK_API_KEY='...'
+export OPENCODE_GO_API_KEY='...'
+export EXA_API_KEY='...'  # optional web search
+```
+
+With an Exa key configured, models with tools enabled can call `web_search` using the [Exa Search API](https://exa.ai/docs/reference/search). Set the masked Exa key in `/settings` → Providers → Exa API key, or export `EXA_API_KEY`; the saved `exa_api_key` overrides the environment. Search returns titles, URLs, publication dates and highlights, defaults to five results (maximum ten), and supports `include_domains` / `exclude_domains`. It works in all modes, including inspect, without Docker.
+
+Exa receives the search query and domain filters through a fixed HTTPS endpoint in the host process. Search results are untrusted data; the model should cite their URLs. Credentials stay outside tool arguments and containers. The provider allowlist also controls Exa: new default configurations permit it, but existing explicit allowlists must include `exa` (for example, `/providers openrouter deepseek opencode-go exa`). Omitting `exa` disables the tool even when a key is present. `/providers` reports effective search availability, and settings mark saved keys blocked by policy. The system prompt describes the available search capability and directs models to use it for current information such as weather. Search cost is recorded under `exa:web_search` and counts toward the turn spending budget; unknown cost stops further requests when a cost budget is enabled.
+
+Saved credentials remain in a private 0600 config file. That file and host credential directories are outside the tool environment. Known provider credentials and secret-valued environment variables are redacted before persistence and transmission. This does not discover every secret; keep sensitive data out of the selected workspace.
+
+Role JSON supports optional `context_window`, `output_limit` and `disable_tools` overrides. Unknown model limits are shown as unavailable. Compaction reserves output headroom and commits only complete, smaller summaries. A recognised context-overflow rejection can trigger one compaction retry; completed tools are never automatically replayed. Explicit transient HTTP rejections receive at most two retries. Transport errors and partial streams are preserved without automatic replay.
+
+Enable **compact command output** in `/settings` with `b`, or set `"compact_command_output": true` in config. This setting works with local commands and the experimental Docker sandbox; this optional setting keeps their output from filling the session context and terminal transcript. Each result includes a roughly 2 KiB preview of the beginning and end, completion status, and a log ID. The model can use `read_command_output` to fetch selected byte ranges (default 2,000 bytes, maximum 4,000 per call). Known credentials are redacted before logs are saved outside the staged project; logs retain up to 1 MiB per command and report truncation. Logs survive resume and fork and share the session's deletion/ephemeral lifecycle. The setting defaults to off for compatibility; disabling it restores standard command output. Command output formatting does not change the selected shell backend or approval rules.
+
+## Sessions and privacy
+
+Sessions contain conversation messages, model/provider provenance, usage totals and a rendered transcript. Progress checkpoints and an event journal are written during work, including before and after tools. An interrupted session requires `/changes` and `/recover` before another task or apply. Pending calls are marked interrupted, not executed again on resume.
+
+- `/session` opens saved sessions for the current project.
+- `/session search <text>` filters by title or ID.
+- `/name <title>` renames the current session.
+- `/fork` copies the conversation and staged files into an independent session. It does not rewind project files.
+- `/session delete <id>` deletes the session, journal, staged files and undo records.
+- `/session export <new path>` creates a private JSON export. Inspect it before sharing.
+- `/session new` or `/clear` starts fresh while preserving the previous saved session.
+
+Files live under `$XDG_CONFIG_HOME/jev-harness` or `~/.config/jev-harness`. Staged copies and undo records are private but can contain proprietary source. Set `safety.retention_days` to prune old completed sessions, or leave the default `0` for manual retention. Retention deletes the associated staged state and undo records too.
+
+Use `./jev --ephemeral` to avoid persistent conversation/session files. Its temporary staged copies are removed on orderly exit; an OS crash or forced termination can leave private temporary files that need manual removal. Saved-session browsing and export are disabled in this mode.
+
+## Limits
+
+```sh
+./jev --mode inspect
+./jev --output-tokens 4096 --token-budget 100000 --time-budget 300
+./jev --cost-budget 0.50
+```
+
+Defaults are 8,192 output tokens per request, 200,000 tokens per turn, 600 seconds per turn, and 25 tool rounds. Missing usage reserves estimated input plus maximum output rather than giving a request a free budget. Token estimates are approximate; provider-side limits remain useful.
+
+The USD budget stops further requests when reported cost reaches the limit or cost is unavailable. It cannot guarantee the price of an in-flight request. Use provider-side spending limits for a hard financial cap. Stats distinguish reported cost from requests whose cost is unavailable.
+
+Snapshots are limited to 128 MiB, 10,000 files and 2 MiB per file. Symlinks, credential filenames/directories, `.git`, `node_modules`, `vendor`, `.cache`, the local `jev` binary, the harness's config directory and files containing known plaintext credentials are omitted. Choose a narrower working directory if the project exceeds these limits. The experimental Docker sandbox has 2 GiB RAM, one CPU, 128 processes, a 512 MiB workspace tmpfs and a 1 GiB temporary tmpfs. Commands have a maximum ten-minute timeout. Docker also has a container-side timeout if the harness dies.
+
+## Verification and evaluation
+
+Tests are retained in the repository and run in CI:
+
+```sh
+go test -race ./...
+go vet ./...
+go mod verify
+JEV_DOCKER_TEST=1 go test -v ./internal/tools -run TestLiveDocker
+JEV_DOCKER_PROJECT_TEST=1 go test -v ./internal/tools -run TestLiveDockerProjectChecks
+```
+
+CI includes a separate Docker isolation job. The live test checks host-path isolation, absent credentials, blocked outbound network and staged shell writes.
+
+Evaluate routing against the configured default-role baseline:
+
+```sh
+./jev eval eval/cases.jsonl > results.jsonl
+```
+
+This makes real, billed provider requests. Each JSONL case contains `id`, `prompt`, optional sequential `followups`, and a `check` shell command. Each strategy gets a fresh ephemeral workspace. Checks use the configured shell backend: local by default, or the offline experimental Docker sandbox when enabled. Output reports completion, check success, selected models, latency, reported tokens/cost and accounting completeness. The included two cases demonstrate the format; they are not a representative benchmark. Build a held-out dataset covering your projects, debugging, ambiguous tasks and short contextual follow-ups before claiming an advantage over a fixed model.
+
+The [screenshot gallery](screenshots/README.md) shows the earlier routing showcase. Its routing decisions, replies, timings and usage are illustrative, and its tool/approval screens predate the staged-workspace controls.
+
+Exa request, error, cancellation, credential and policy tests use local mock servers. To make one billable live search with your own key:
+
+```sh
+JEV_EXA_TEST=1 go test ./internal/tools -run '^TestLiveExa$' -v
+```
