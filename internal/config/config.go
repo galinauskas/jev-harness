@@ -15,24 +15,83 @@ import (
 
 // Role maps a Jev criteria name to a provider and model.
 type Role struct {
-	Provider    string `json:"provider,omitempty"` // empty means openrouter
-	Name        string `json:"name"`               // ^[a-z0-9_-]{1,32}$, unique; used verbatim as Jev criteria key
-	Model       string `json:"model"`              // provider model id
-	Description string `json:"description"`        // Jev criteria text: when this role should win
+	ContextWindow int    `json:"context_window,omitempty"`
+	OutputLimit   int    `json:"output_limit,omitempty"`
+	DisableTools  bool   `json:"disable_tools,omitempty"`
+	Provider      string `json:"provider,omitempty"` // empty means openrouter
+	Name          string `json:"name"`               // ^[a-z0-9_-]{1,32}$, unique; used verbatim as Jev criteria key
+	Model         string `json:"model"`              // provider model id
+	Description   string `json:"description"`        // Jev criteria text: when this role should win
 }
 
 // Config is the on-disk application configuration.
 type Config struct {
-	OpenCodeGoAPIKey    string           `json:"opencode_go_api_key,omitempty"`
-	DeepSeekAPIKey      string           `json:"deepseek_api_key,omitempty"`
-	APIKey              string           `json:"api_key,omitempty"`
-	JevModel            string           `json:"jev_model"`                  // default "typesafe/jev-1.13"
-	ConfidenceThreshold float64          `json:"confidence_threshold"`       // default 0.5, range [0,1]
-	CompactionThreshold int              `json:"compaction_threshold"`       // percent of model context; 0 disables
-	ChatInputLines      bool             `json:"chat_input_lines,omitempty"` // show horizontal rules around the chat input
-	StatusLine          StatusLineConfig `json:"status_line"`
-	DefaultRole         string           `json:"default_role"` // must name an existing role
-	Roles               []Role           `json:"roles"`
+	CompactCommandOutput bool             `json:"compact_command_output,omitempty"`
+	ExaAPIKey            string           `json:"exa_api_key,omitempty"`
+	Safety               SafetyConfig     `json:"safety"`
+	Limits               Limits           `json:"limits"`
+	OpenCodeGoAPIKey     string           `json:"opencode_go_api_key,omitempty"`
+	DeepSeekAPIKey       string           `json:"deepseek_api_key,omitempty"`
+	APIKey               string           `json:"api_key,omitempty"`
+	JevModel             string           `json:"jev_model"`                  // default "typesafe/jev-1.13"
+	ConfidenceThreshold  float64          `json:"confidence_threshold"`       // default 0.5, range [0,1]
+	CompactionThreshold  int              `json:"compaction_threshold"`       // percent of model context; 0 disables
+	ChatInputLines       bool             `json:"chat_input_lines,omitempty"` // show horizontal rules around the chat input
+	StatusLine           StatusLineConfig `json:"status_line"`
+	DefaultRole          string           `json:"default_role"` // must name an existing role
+	Roles                []Role           `json:"roles"`
+}
+
+// Safety settings are user-owned. Repository instructions cannot broaden them.
+type SafetyConfig struct {
+	DockerSandbox    bool                `json:"docker_sandbox,omitempty"` // experimental, opt-in
+	Mode             string              `json:"mode"`
+	SandboxImage     string              `json:"sandbox_image"`
+	AllowedProviders []string            `json:"allowed_providers"`
+	Projects         map[string][]string `json:"projects,omitempty"`
+	Ephemeral        bool                `json:"ephemeral,omitempty"`
+	RetentionDays    int                 `json:"retention_days,omitempty"`
+}
+
+type Limits struct {
+	OutputTokens int     `json:"output_tokens"`
+	TotalTokens  int     `json:"total_tokens"`
+	Seconds      int     `json:"seconds"`
+	Cost         float64 `json:"cost_usd"`
+}
+
+func (c *Config) ApplyDefaults() {
+	if c.Safety.Mode == "" {
+		c.Safety.Mode = "develop"
+	}
+	if c.Safety.SandboxImage == "" {
+		c.Safety.SandboxImage = "jev-harness-sandbox:1"
+	}
+	if c.Safety.AllowedProviders == nil {
+		c.Safety.AllowedProviders = []string{"openrouter", "deepseek", "opencode-go", "exa"}
+	}
+	if c.Limits.OutputTokens == 0 {
+		c.Limits.OutputTokens = 8192
+	}
+	if c.Limits.TotalTokens == 0 {
+		c.Limits.TotalTokens = 200000
+	}
+	if c.Limits.Seconds == 0 {
+		c.Limits.Seconds = 600
+	}
+}
+
+func (c Config) ProviderAllowed(cwd, provider string) bool {
+	allowed := c.Safety.AllowedProviders
+	if project, ok := c.Safety.Projects[cwd]; ok {
+		allowed = project
+	}
+	for _, p := range allowed {
+		if p == provider {
+			return true
+		}
+	}
+	return false
 }
 
 // StatusLineConfig stores hidden items so older configs keep all items visible.
@@ -59,7 +118,7 @@ func Path() string {
 
 // Default returns a working starter config with two roles.
 func Default() Config {
-	return Config{
+	cfg := Config{
 		JevModel:            "typesafe/jev-1.13",
 		ConfidenceThreshold: 0.5,
 		CompactionThreshold: 80,
@@ -77,6 +136,8 @@ func Default() Config {
 			},
 		},
 	}
+	cfg.ApplyDefaults()
+	return cfg
 }
 
 // Load reads the config file. A missing file returns Default() and no error.
@@ -93,6 +154,7 @@ func Load() (Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config %s: %w", Path(), err)
 	}
+	cfg.ApplyDefaults()
 	return cfg, nil
 }
 
@@ -152,11 +214,33 @@ func (c Config) RoleByName(name string) (Role, bool) {
 // joined by "; " so the settings form can display it verbatim.
 func (c Config) Validate() error {
 	var errs []string
+	if c.Safety.Mode != "" && c.Safety.Mode != "inspect" && c.Safety.Mode != "develop" && c.Safety.Mode != "autonomous" {
+		errs = append(errs, "mode must be inspect, develop or autonomous")
+	}
+	if c.Limits.OutputTokens < 0 || c.Limits.TotalTokens < 0 || c.Limits.Seconds < 0 || c.Limits.Cost < 0 || math.IsNaN(c.Limits.Cost) || math.IsInf(c.Limits.Cost, 0) {
+		errs = append(errs, "limits must be finite nonnegative values")
+	}
+	if strings.HasPrefix(c.Safety.SandboxImage, "-") || strings.ContainsAny(c.Safety.SandboxImage, " \t\r\n") {
+		errs = append(errs, "sandbox_image must be a Docker image reference")
+	}
+	if c.Safety.RetentionDays < 0 {
+		errs = append(errs, "retention_days must be nonnegative")
+	}
+	for _, list := range append([][]string{c.Safety.AllowedProviders}, projectProviderLists(c.Safety.Projects)...) {
+		for _, provider := range list {
+			if provider != "openrouter" && provider != "deepseek" && provider != "opencode-go" && provider != "exa" {
+				errs = append(errs, "unknown allowed provider: "+provider)
+			}
+		}
+	}
 	if len(c.Roles) == 0 {
 		errs = append(errs, "at least one role is required")
 	}
 	seen := map[string]bool{}
 	for _, r := range c.Roles {
+		if r.ContextWindow < 0 || r.OutputLimit < 0 {
+			errs = append(errs, "model limits must be nonnegative")
+		}
 		if !nameRe.MatchString(r.Name) {
 			errs = append(errs, fmt.Sprintf("role name %q must match ^[a-z0-9_-]{1,32}$", r.Name))
 		}
@@ -217,6 +301,8 @@ func (c Config) ProviderKey(provider string) string {
 	switch provider {
 	case "openrouter", "":
 		return c.Key()
+	case "exa":
+		saved, env = c.ExaAPIKey, "EXA_API_KEY"
 	case "deepseek":
 		saved, env = c.DeepSeekAPIKey, "DEEPSEEK_API_KEY"
 	case "opencode-go":
@@ -228,4 +314,23 @@ func (c Config) ProviderKey(provider string) string {
 		return key
 	}
 	return strings.TrimSpace(os.Getenv(env))
+}
+
+func projectProviderLists(projects map[string][]string) [][]string {
+	var lists [][]string
+	for _, p := range projects {
+		lists = append(lists, p)
+	}
+	return lists
+}
+
+// ExaSearchStatus explains the effective project capability without revealing keys.
+func (c Config) ExaSearchStatus(cwd string) string {
+	if !c.ProviderAllowed(cwd, "exa") {
+		return "disabled by provider policy (add exa with /providers)"
+	}
+	if c.ProviderKey("exa") == "" {
+		return "unavailable: set the Exa key in /settings or EXA_API_KEY"
+	}
+	return "available"
 }
