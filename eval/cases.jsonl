@@ -1,0 +1,2 @@
+{"id":"small-file","prompt":"Create eval-result.txt containing exactly HELLO followed by a newline.","check":"test \"$(cat eval-result.txt)\" = HELLO"}
+{"id":"followup-context","prompt":"Create eval-result.txt containing exactly the line FIRST.","followups":["Replace it with SECOND, preserving the newline."],"check":"test \"$(cat eval-result.txt)\" = SECOND"}
