@@ -426,7 +426,3 @@ func (a *Agent) chatClient(role config.Role) *openrouter.Client {
 
 // SetSessionID keeps Go routing and prompt caching stable across saved-session resumes.
 func (a *Agent) SetSessionID(id string) { a.opencodeGo.SetSessionID(id) }
-
-func (a *Agent) ContextLength(ctx context.Context, model string) (int, error) {
-	return a.client.ContextLength(ctx, model)
-}

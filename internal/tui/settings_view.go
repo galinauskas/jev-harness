@@ -52,6 +52,8 @@ func (s settingsModel) headingLines(w int) []string {
 		section = "Settings  /  Status line"
 	case sHelp:
 		section = "Settings  /  Help"
+	case sContextForm:
+		section = "Settings  /  Context"
 	case sGlobalsForm:
 		section = "Settings  /  Routing"
 	case sRoleForm:
@@ -107,13 +109,15 @@ func (s settingsModel) listLines(w int) []string {
 		return dimStyle.Render(fmt.Sprintf("%-*s", labelWidth, label)) + ansi.Truncate(value, max(1, inner-labelWidth), "…")
 	}
 	keyState := errStyle.Render("not set")
-	if os.Getenv("OPENROUTER_API_KEY") != "" {
-		keyState = okStyle.Render("env")
-	} else if s.cfg.APIKey != "" {
+	if strings.TrimSpace(s.cfg.APIKey) != "" {
 		keyState = okStyle.Render("saved")
+	} else if strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")) != "" {
+		keyState = okStyle.Render("env")
 	}
 	lines := settingsBox(w, "ROUTING  [g] edit", []string{
-		row("API key", keyState),
+		row("OpenRouter key", keyState),
+		row("DeepSeek key", keyStatus(s.cfg.DeepSeekAPIKey, "DEEPSEEK_API_KEY")),
+		row("OpenCode Go key", keyStatus(s.cfg.OpenCodeGoAPIKey, "OPENCODE_GO_API_KEY")),
 		row("Jev model", accent.Render(settingsText(s.cfg.JevModel))),
 		row("Threshold", fmt.Sprintf("%g  %s", s.cfg.ConfidenceThreshold, dimStyle.Render("below → default role"))),
 	})
@@ -125,6 +129,7 @@ func (s settingsModel) listLines(w int) []string {
 	lines = append(lines, settingsBox(w, "CHAT", []string{
 		row("[t] Input", accent.Render(inputStyle)),
 		row("[s] Status line", dimStyle.Render("Choose visible items")),
+		row("[c] Compaction", s.compactionLabel()),
 	})...)
 	lines = append(lines, "")
 	// Reserve room for the panels and shortcut footer. Keep the selected role
@@ -132,7 +137,7 @@ func (s settingsModel) listLines(w int) []string {
 	visible := len(s.cfg.Roles)
 	if s.h > 0 {
 		if s.h >= 24 {
-			visible = min(visible, max(1, (s.h-20)/2))
+			visible = min(visible, max(1, (s.h-23)/2))
 		} else {
 			visible = min(visible, max(1, (s.h-18)/2))
 		}
@@ -154,7 +159,7 @@ func (s settingsModel) listLines(w int) []string {
 		name := ansi.Truncate(settingsText(r.Name), max(1, inner/2-4), "…")
 		left := marker + star + nameStyle.Render(name)
 		modelWidth := min(max(8, inner/2), max(1, inner-lipgloss.Width(left)-1))
-		model := accent.Render(ansi.Truncate(settingsText(r.Model), modelWidth, "…"))
+		model := accent.Render(ansi.Truncate(settingsText(r.Backend()+" · "+r.Model), modelWidth, "…"))
 		gap := max(1, inner-lipgloss.Width(left)-lipgloss.Width(model))
 		roles = append(roles, left+strings.Repeat(" ", gap)+model)
 		roles = append(roles, "    "+dimStyle.Render(ansi.Truncate(settingsText(r.Description), max(1, inner-4), "…")))
@@ -172,7 +177,7 @@ func (s settingsModel) compactListLines(w int) []string {
 	if s.cfg.ChatInputLines {
 		inputStyle = "Horizontal rules"
 	}
-	lines := []string{"  " + dimStyle.Render("[g] Routing  ·  [t] Input: ") + accent.Render(inputStyle) + dimStyle.Render("  ·  [s] Status"), ""}
+	lines := []string{"  " + dimStyle.Render("[c] Context: ") + s.compactionLabel(), "  " + dimStyle.Render("[g] Routing  ·  [t] Input: ") + accent.Render(inputStyle) + dimStyle.Render("  ·  [s] Status"), ""}
 	if len(s.cfg.Roles) > 0 {
 		i := max(0, min(s.cursor, len(s.cfg.Roles)-1))
 		role := s.cfg.Roles[i]
@@ -181,7 +186,7 @@ func (s settingsModel) compactListLines(w int) []string {
 			marker = "★ "
 		}
 		rows := []string{
-			okStyle.Render("▸ ") + marker + settingsText(role.Name) + "  " + dimStyle.Render(settingsText(role.Model)),
+			okStyle.Render("▸ ") + marker + settingsText(role.Name) + "  " + dimStyle.Render(settingsText(role.Backend()+" · "+role.Model)),
 			"  " + dimStyle.Render(settingsText(role.Description)),
 		}
 		lines = append(lines, settingsBox(w, "ROLES", rows)...)
@@ -227,9 +232,10 @@ func (s settingsModel) helpLines(w int) []string {
 	})
 	lines = append(lines, "")
 	lines = append(lines, settingsBox(w, "OTHER SETTINGS", []string{
-		"g        Routing and API key",
+		"g        Routing and API keys",
 		"t        Toggle chat input style",
 		"s        Choose status line items",
+		"c        Context compaction threshold",
 	})...)
 	lines = append(lines, "", "  "+dimStyle.Render("Esc back"))
 	return lines
@@ -237,25 +243,54 @@ func (s settingsModel) helpLines(w int) []string {
 
 func (s settingsModel) formLines(w int) []string {
 	title := "NEW ROLE"
-	labels := []string{"Name", "Model ID", "Routing description"}
-	if s.mode == sGlobalsForm {
+	labels := []string{"Name", "Model ID", "Routing description", "Provider (openrouter / deepseek / opencode-go)"}
+	if s.mode == sContextForm {
+		title = "CONTEXT COMPACTION"
+		labels = []string{"Start compacting at % (1–100; 0 disables)"}
+	} else if s.mode == sGlobalsForm {
 		title = "ROUTING SETTINGS"
-		labels = []string{"Jev model ID", "Confidence threshold (0–1)", "OpenRouter API key"}
+		labels = []string{"Jev model ID", "Confidence threshold (0–1)", "OpenRouter API key", "DeepSeek API key", "OpenCode Go API key"}
 	} else if s.editingIdx >= 0 {
 		title = "EDIT ROLE · " + settingsText(s.cfg.Roles[s.editingIdx].Name)
 	}
 	content := make([]string, 0, len(s.inputs)*3)
-	for i := range s.inputs {
+	start, end := 0, len(s.inputs)
+	if s.h > 0 {
+		visible := max(1, (s.h-12)/3)
+		start = max(0, min(s.focus-visible/2, len(s.inputs)-visible))
+		end = min(len(s.inputs), start+visible)
+	}
+	for i := start; i < end; i++ {
 		label := dimStyle.Render(labels[i])
 		if i == s.focus {
 			label = okStyle.Render("▸ " + labels[i])
 		}
 		content = append(content, label, s.inputs[i].View())
-		if i < len(s.inputs)-1 {
+		if i < end-1 {
 			content = append(content, "")
 		}
 	}
 	lines := settingsBox(w, title, content)
+	if s.mode == sGlobalsForm {
+		lines = append(lines, "", "  "+dimStyle.Render("Saved keys override OPENROUTER_API_KEY / DEEPSEEK_API_KEY / OPENCODE_GO_API_KEY."))
+	}
 	lines = append(lines, "", "  "+dimStyle.Render("tab / shift+tab move  ·  enter save  ·  esc cancel"))
 	return lines
+}
+
+func (s settingsModel) compactionLabel() string {
+	if s.cfg.CompactionThreshold == 0 {
+		return dimStyle.Render("Off")
+	}
+	return accent.Render(fmt.Sprintf("%d%% of model context", s.cfg.CompactionThreshold))
+}
+
+func keyStatus(saved, env string) string {
+	if strings.TrimSpace(saved) != "" {
+		return okStyle.Render("saved")
+	}
+	if strings.TrimSpace(os.Getenv(env)) != "" {
+		return okStyle.Render("env")
+	}
+	return errStyle.Render("not set")
 }

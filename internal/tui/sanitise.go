@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -50,5 +51,20 @@ func safeText(s string) string {
 			b.WriteRune(r)
 		}
 	}
+	return b.String()
+}
+
+// Saved transcripts may retain colour and emphasis, but no terminal commands.
+var transcriptStyle = regexp.MustCompile(`\x1b\[[0-9;:]{0,128}m`)
+
+func safeTranscript(s string) string {
+	var b strings.Builder
+	pos := 0
+	for _, span := range transcriptStyle.FindAllStringIndex(s, -1) {
+		b.WriteString(safeText(s[pos:span[0]]))
+		b.WriteString(s[span[0]:span[1]])
+		pos = span[1]
+	}
+	b.WriteString(safeText(s[pos:]))
 	return b.String()
 }

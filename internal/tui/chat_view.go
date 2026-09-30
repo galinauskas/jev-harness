@@ -12,7 +12,9 @@ import (
 func routeLine(d router.Decision) string {
 	var src string
 	switch d.Source {
-	case router.SourceJev, router.SourcePinned:
+	case router.SourcePinned:
+		src = "pinned"
+	case router.SourceJev:
 		src = fmt.Sprintf("%.2f confidence", d.Confidence)
 	case router.SourceThreshold:
 		src = fmt.Sprintf("default: low confidence %.2f", d.Confidence)
@@ -25,10 +27,13 @@ func routeLine(d router.Decision) string {
 	if model == "" {
 		model = "?"
 	}
-	return fmt.Sprintf("→ %s (%s) %s", safeText(d.Role.Name), safeText(src), safeText(model))
+	return fmt.Sprintf("→ %s (%s) %s", safeText(d.Role.Name), safeText(src), safeText(d.Role.Backend()+" · "+model))
 }
 
 func (c chatModel) View() string {
+	if c.sessionPicker {
+		return c.sessionsView()
+	}
 	return c.vp.View() + "\n" + c.thinkingLine() + "\n" + c.inputView() + "\n" + c.statsLine()
 }
 
@@ -50,17 +55,36 @@ func (c chatModel) inputView() string {
 		Render(c.ta.View())
 }
 
-// thinkingLine sits above the input box; reserved height keeps layout stable.
+// thinkingLine sits above the input box, expanding for a pending approval.
 func (c chatModel) thinkingLine() string {
 	if c.approval != nil {
-		label := "Allow " + c.approveText + "?  y/N · esc abort"
-		return " " + accent.Render(ansi.Truncate(label, max(1, c.w-1), "…"))
+		return c.approvalView()
 	}
 	if !c.running() {
-		return ""
+		return c.commandSuggestionsView()
 	}
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	return " " + accent.Render(frames[c.spin%len(frames)]+" thinking…")
+}
+
+func (c chatModel) approvalView() string {
+	width := max(1, c.w-4) // border and horizontal padding
+	yellow := lipgloss.Color("220")
+	heading := lipgloss.NewStyle().Bold(true).Foreground(yellow)
+	details := strings.Split(ansi.Wrap(c.approveText, width, ""), "\n")
+	// Keep the input visible; the full request is also in the scrollable chat.
+	limit := max(1, min(6, c.h-c.ta.Height()-9))
+	if len(details) > limit {
+		details = append(details[:limit], "… full request above (PgUp/PgDn)")
+	}
+	content := heading.Render("Approval required") + "\n" + strings.Join(details, "\n") +
+		"\n" + heading.Render("Y approve · N/Enter deny · Esc abort")
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(yellow).
+		Padding(0, 1).
+		Width(max(1, c.w)).
+		Render(content)
 }
 
 func (c chatModel) statsLine() string {
@@ -88,7 +112,7 @@ func (c chatModel) statsLine() string {
 		if model != "" {
 			percent := "0%"
 			limit := "?"
-			if n := c.contextLengths[model]; n > 0 {
+			if n := c.contextLengths[roleContextKey(c.activeRole())]; n > 0 {
 				limit = fmtTok(n)
 				if c.contextModel == model && c.contextUsed > 0 {
 					percent = fmt.Sprintf("%.0f%%", 100*float64(c.contextUsed)/float64(n))

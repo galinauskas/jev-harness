@@ -23,6 +23,7 @@ const (
 	sGlobalsForm
 	sStatusForm
 	sHelp
+	sContextForm
 )
 
 type settingsModel struct {
@@ -53,7 +54,7 @@ func (s *settingsModel) resize(w, h int) {
 
 func (s settingsModel) Update(msg tea.Msg) (settingsModel, tea.Cmd) {
 	switch s.mode {
-	case sRoleForm, sGlobalsForm:
+	case sRoleForm, sGlobalsForm, sContextForm:
 		return s.updateForm(msg)
 	case sStatusForm:
 		return s.updateStatus(msg)
@@ -113,6 +114,11 @@ func (s settingsModel) updateList(msg tea.Msg) (settingsModel, tea.Cmd) {
 		cfg := s.cfg
 		cfg.DefaultRole = s.cfg.Roles[s.cursor].Name
 		return s.applyConfig(cfg, "default: "+cfg.DefaultRole)
+	case "c":
+		s.mode, s.focus, s.msg = sContextForm, 0, ""
+		s.inputs = []textinput.Model{newInput("compaction threshold", strconv.Itoa(s.cfg.CompactionThreshold))}
+		s.inputs[0].SetWidth(s.inputWidth())
+		return s, s.inputs[0].Focus()
 	case "g":
 		return s.openGlobalsForm()
 	case "s":
@@ -190,6 +196,7 @@ func (s settingsModel) openRoleForm(idx int) (settingsModel, tea.Cmd) {
 		newInput("name", role.Name),
 		newInput("model", role.Model),
 		newInput("description", role.Description),
+		newInput("provider (openrouter, deepseek, opencode-go)", role.Backend()),
 	}
 	for i := range s.inputs {
 		s.inputs[i].SetWidth(s.inputWidth())
@@ -205,8 +212,12 @@ func (s settingsModel) openGlobalsForm() (settingsModel, tea.Cmd) {
 		newInput("jev model", s.cfg.JevModel),
 		newInput("confidence threshold", fmt.Sprintf("%g", s.cfg.ConfidenceThreshold)),
 		newInput("openrouter api key", s.cfg.APIKey),
+		newInput("deepseek api key", s.cfg.DeepSeekAPIKey),
+		newInput("opencode go api key", s.cfg.OpenCodeGoAPIKey),
 	}
-	s.inputs[2].EchoMode = textinput.EchoPassword
+	for i := 2; i < len(s.inputs); i++ {
+		s.inputs[i].EchoMode = textinput.EchoPassword
+	}
 	for i := range s.inputs {
 		s.inputs[i].SetWidth(s.inputWidth())
 	}
@@ -261,6 +272,7 @@ func (s settingsModel) saveForm() (settingsModel, tea.Cmd) {
 			Name:        strings.TrimSpace(s.inputs[0].Value()),
 			Model:       strings.TrimSpace(s.inputs[1].Value()),
 			Description: strings.TrimSpace(s.inputs[2].Value()),
+			Provider:    strings.ToLower(strings.TrimSpace(s.inputs[3].Value())),
 		}
 		if s.editingIdx >= 0 {
 			old := cfg.Roles[s.editingIdx].Name
@@ -272,6 +284,12 @@ func (s settingsModel) saveForm() (settingsModel, tea.Cmd) {
 		} else {
 			cfg.Roles = append(cfg.Roles, role)
 		}
+	} else if s.mode == sContextForm {
+		n, err := strconv.Atoi(strings.TrimSpace(s.inputs[0].Value()))
+		if err != nil {
+			return fail("compaction threshold must be a whole percentage (0–100)")
+		}
+		cfg.CompactionThreshold = n
 	} else {
 		cfg.JevModel = strings.TrimSpace(s.inputs[0].Value())
 		f, err := strconv.ParseFloat(strings.TrimSpace(s.inputs[1].Value()), 64)
@@ -280,6 +298,8 @@ func (s settingsModel) saveForm() (settingsModel, tea.Cmd) {
 		}
 		cfg.ConfidenceThreshold = f
 		cfg.APIKey = strings.TrimSpace(s.inputs[2].Value())
+		cfg.DeepSeekAPIKey = strings.TrimSpace(s.inputs[3].Value())
+		cfg.OpenCodeGoAPIKey = strings.TrimSpace(s.inputs[4].Value())
 	}
 
 	if err := cfg.Validate(); err != nil {

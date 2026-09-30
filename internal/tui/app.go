@@ -89,10 +89,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.chat.requestContext()
 	case tea.KeyPressMsg:
 		if m.String() == "ctrl+c" {
-			if a.chat.cancel != nil {
-				a.chat.cancel()
-			}
-			return a, tea.Quit
+			var cmd tea.Cmd
+			a.chat, cmd = a.chat.quit()
+			return a, cmd
 		}
 		if m.String() == "ctrl+o" && a.mode == modeChat {
 			return a.Update(openSettingsMsg{})
