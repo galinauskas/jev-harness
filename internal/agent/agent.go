@@ -12,6 +12,7 @@ import (
 	"jevharness/internal/config"
 	"jevharness/internal/openrouter"
 	"jevharness/internal/router"
+	"jevharness/internal/session"
 	"jevharness/internal/tools"
 )
 
@@ -21,12 +22,16 @@ const maxRounds = 25
 type Kind int
 
 const (
-	Routed     Kind = iota // routing decision made
-	TextDelta              // assistant text fragment
-	ToolCall               // model requested a tool
-	ToolResult             // tool finished
-	TurnDone               // turn complete
-	Error                  // turn failed or aborted
+	Routed            Kind = iota // routing decision made
+	TextDelta                     // assistant text fragment
+	ToolCall                      // model requested a tool
+	ToolResult                    // tool finished
+	TurnDone                      // turn complete
+	Error                         // turn failed or aborted
+	Compacting                    // summarising earlier context
+	Compacted                     // summary committed
+	CompactionWarning             // compaction unavailable; history preserved
+	UsageRecorded                 // reported usage for one API request
 )
 
 // Event is streamed to the TUI during a turn.
@@ -38,26 +43,31 @@ type Event struct {
 	Approve  chan bool // present when a tool needs user approval
 	Decision *router.Decision
 	Usage    *openrouter.Usage
+	Model    string // model billed for UsageRecorded
 	// ContextTokens is the prompt size of the last request in the turn.
 	ContextTokens int
-	// Duration is the response wall time on TurnDone (last stream round).
+	// Duration is the response wall time on TurnDone (all chat rounds).
 	Duration time.Duration
 }
 
 // Agent holds conversation state and runs turns.
 type Agent struct {
-	client *openrouter.Client
-	router *router.Router
-	cfg    config.Config
-	cwd    string
+	opencodeGo *openrouter.Client
+	deepseek   *openrouter.Client
+	client     *openrouter.Client
+	router     *router.Router
+	cfg        config.Config
+	cwd        string
 	// Pinned is a role name or "" for auto routing.
-	Pinned string
-	msgs   []openrouter.Message // starts with the system message
+	Pinned         string
+	contextLengths map[string]int
+	tokenRatios    map[string]float64
+	msgs           []openrouter.Message // starts with the system message
 }
 
 // New creates an Agent whose history begins with the system prompt.
 func New(client *openrouter.Client, r *router.Router, cfg config.Config, cwd string) *Agent {
-	a := &Agent{client: client, router: r, cfg: cfg, cwd: cwd}
+	a := &Agent{client: client, deepseek: openrouter.NewDeepSeek(cfg.ProviderKey("deepseek")), opencodeGo: openrouter.NewOpenCodeGo(cfg.ProviderKey("opencode-go")), router: r, cfg: cfg, cwd: cwd}
 	a.Clear()
 	return a
 }
@@ -79,6 +89,9 @@ func (a *Agent) SetConfig(cfg config.Config) {
 	if a.client != nil {
 		a.client.SetKey(cfg.Key())
 	}
+	a.deepseek.SetKey(cfg.ProviderKey("deepseek"))
+	a.opencodeGo.SetKey(cfg.ProviderKey("opencode-go"))
+	a.contextLengths = make(map[string]int)
 	a.router = router.New(a.client, cfg)
 	if a.Pinned != "" {
 		if _, ok := cfg.RoleByName(a.Pinned); !ok {
@@ -90,51 +103,63 @@ func (a *Agent) SetConfig(cfg config.Config) {
 // Clear resets history to just the system prompt (/clear).
 func (a *Agent) Clear() {
 	a.msgs = []openrouter.Message{a.system()}
+	id, err := session.NewID()
+	if err != nil {
+		panic("create provider session ID: " + err.Error())
+	}
+	a.SetSessionID(id)
+	a.contextLengths = make(map[string]int)
+	a.tokenRatios = make(map[string]float64)
 }
 
-func (a *Agent) ContextLength(ctx context.Context, model string) (int, error) {
-	return a.client.ContextLength(ctx, model)
+// History returns a detached snapshot. Call only after the turn channel closes.
+func (a *Agent) History() []openrouter.Message {
+	msgs := append([]openrouter.Message(nil), a.msgs[1:]...)
+	for i := range msgs {
+		msgs[i] = cloneMessage(msgs[i])
+	}
+	return msgs
 }
 
-// trimHistory keeps recent complete user turns, so long sessions do not send
-// an ever-growing transcript with every request.
-func (a *Agent) trimHistory() {
-	if len(a.msgs) <= 2 {
-		return
-	}
-	start, turns := 1, 0
-	for i := len(a.msgs) - 1; i >= 1; i-- {
-		if a.msgs[i].Role == "user" {
-			turns++
-			start = i
-			if turns >= 12 {
-				break
-			}
+// Restore resumes history with the current system prompt and configuration.
+// Call only while no turn is running.
+func (a *Agent) Restore(msgs []openrouter.Message, pinned string) {
+	a.Clear()
+	for _, m := range msgs {
+		if m.Role != "system" {
+			m = cloneMessage(m)
+			a.msgs = append(a.msgs, m)
 		}
 	}
-	for start < len(a.msgs)-1 {
-		bytes := 0
-		for _, m := range a.msgs[start:] {
-			bytes += len(m.Content)
-			for _, call := range m.ToolCalls {
-				bytes += len(call.Function.Arguments)
-			}
-		}
-		if bytes <= 200_000 {
-			break
-		}
-		next := start + 1
-		for next < len(a.msgs) && a.msgs[next].Role != "user" {
-			next++
-		}
-		if next == len(a.msgs) {
-			break // Keep the latest turn intact.
-		}
-		start = next
+	a.completeToolResults()
+	a.Pinned = ""
+	if _, ok := a.cfg.RoleByName(pinned); ok {
+		a.Pinned = pinned
 	}
-	if start > 1 {
-		a.msgs = append([]openrouter.Message{a.msgs[0]}, a.msgs[start:]...)
+}
+
+// ContextLookup captures the client while idle, before a background lookup.
+// The returned function only touches the client's synchronised state.
+func (a *Agent) ContextLookup(role config.Role) func(context.Context) (int, error) {
+	client := a.chatClient(role)
+	return func(ctx context.Context) (int, error) {
+		if client == nil {
+			return 0, fmt.Errorf("provider client is unavailable")
+		}
+		return client.ContextLength(ctx, role.Model)
 	}
+}
+
+func cloneMessage(m openrouter.Message) openrouter.Message {
+	m.ToolCalls = append([]openrouter.ToolCall(nil), m.ToolCalls...)
+	items := make([]json.RawMessage, len(m.NativeItems))
+	for i, item := range m.NativeItems {
+		items[i] = append(json.RawMessage(nil), item...)
+	}
+	if m.NativeItems != nil {
+		m.NativeItems = items
+	}
+	return m
 }
 
 // recentTurns extracts up to 6 user/assistant text messages, each truncated
@@ -188,7 +213,6 @@ func emit(ctx context.Context, ch chan<- Event, ev Event) bool {
 func send(ch chan<- Event, ev Event) { ch <- ev }
 
 func (a *Agent) run(ctx context.Context, text string, ch chan<- Event) {
-	defer a.trimHistory()
 	defer a.completeToolResults()
 	recent := a.recentTurns()
 	a.msgs = append(a.msgs, openrouter.Message{Role: "user", Content: text})
@@ -205,11 +229,16 @@ func (a *Agent) run(ctx context.Context, text string, ch chan<- Event) {
 		dec = a.router.Route(ctx, router.State{Message: text, RecentTurns: recent})
 	}
 	send(ch, Event{Kind: Routed, Decision: &dec})
+	if dec.Usage != nil {
+		send(ch, Event{Kind: UsageRecorded, Model: dec.Model, Usage: dec.Usage})
+	}
 	if dec.Role.Name == "" {
 		send(ch, Event{Kind: Error, Text: "routing failed: no role available"})
 		return
 	}
 
+	chatClient := a.chatClient(dec.Role)
+	cacheKey := dec.Role.Backend() + ":" + dec.Role.Model
 	defs := tools.All(a.cwd)
 	toolDefs := make([]openrouter.ToolDef, len(defs))
 	for i, t := range defs {
@@ -219,8 +248,24 @@ func (a *Agent) run(ctx context.Context, text string, ch chan<- Event) {
 	var total openrouter.Usage
 	var turnDuration time.Duration
 	var contextTokens int
+	metadataCtx, cancelMetadata := context.WithTimeout(ctx, 5*time.Second)
+	window := a.contextLengths[cacheKey]
+	if a.cfg.CompactionThreshold > 0 && window == 0 {
+		var err error
+		window, err = chatClient.ContextLength(metadataCtx, dec.Role.Model)
+		if err != nil && ctx.Err() == nil {
+			send(ch, Event{Kind: CompactionWarning, Text: "Context window unavailable; automatic compaction skipped: " + err.Error()})
+		}
+		a.contextLengths[cacheKey] = window
+	}
+	cancelMetadata()
 	for round := 0; round < maxRounds; round++ {
-		stream, err := a.client.ChatStream(ctx, openrouter.ChatRequest{
+		if err := a.compactWithClient(ctx, chatClient, dec.Role.Model, window, toolDefs, ch); err != nil {
+			send(ch, Event{Kind: Error, Text: "compaction: " + err.Error()})
+			return
+		}
+		promptEstimate := estimateTokens(a.msgs, toolDefs)
+		stream, err := chatClient.ChatStream(ctx, openrouter.ChatRequest{
 			Model:    dec.Role.Model, // every request in the turn uses the routed model
 			Messages: a.msgs,
 			Tools:    toolDefs,
@@ -235,19 +280,25 @@ func (a *Agent) run(ctx context.Context, text string, ch chan<- Event) {
 		}
 
 		var (
-			content strings.Builder
-			calls   []openrouter.ToolCall
-			finish  string
-			usage   *openrouter.Usage
-			sErr    error
-			started time.Time
+			content        strings.Builder
+			calls          []openrouter.ToolCall
+			finish         string
+			usage          *openrouter.Usage
+			sErr           error
+			started        time.Time
+			nativeProvider string
+			nativeItems    []json.RawMessage
+			reasoning      string
 		)
 		for ev := range stream {
 			if ev.TextDelta != "" {
 				content.WriteString(ev.TextDelta)
 				if !emit(ctx, ch, Event{Kind: TextDelta, Text: ev.TextDelta}) {
 					// Drain the cancelled stream so its terminal send cannot leak a goroutine.
-					for range stream {
+					for terminal := range stream {
+						if terminal.Done && terminal.Usage != nil {
+							send(ch, Event{Kind: UsageRecorded, Model: dec.Role.Model, Usage: terminal.Usage})
+						}
 					}
 					// aborted mid-delta: keep the partial reply
 					a.msgs = append(a.msgs, openrouter.Message{Role: "assistant", Content: content.String()})
@@ -257,7 +308,11 @@ func (a *Agent) run(ctx context.Context, text string, ch chan<- Event) {
 			}
 			if ev.Done {
 				calls, finish, usage, sErr, started = ev.ToolCalls, ev.Finish, ev.Usage, ev.Err, ev.Started
+				nativeProvider, nativeItems, reasoning = ev.NativeProvider, ev.NativeItems, ev.ReasoningContent
 			}
+		}
+		if usage != nil {
+			send(ch, Event{Kind: UsageRecorded, Model: dec.Role.Model, Usage: usage})
 		}
 		if !started.IsZero() {
 			turnDuration += time.Since(started)
@@ -267,11 +322,13 @@ func (a *Agent) run(ctx context.Context, text string, ch chan<- Event) {
 		// calls must not enter history without matching tool results.
 		if sErr != nil {
 			calls = nil
+			nativeProvider, nativeItems, reasoning = "", nil, ""
 		}
 		a.msgs = append(a.msgs, openrouter.Message{
-			Role:      "assistant",
-			Content:   content.String(),
-			ToolCalls: calls,
+			Role:           "assistant",
+			Content:        content.String(),
+			ToolCalls:      calls,
+			NativeProvider: nativeProvider, NativeItems: nativeItems, ReasoningContent: reasoning,
 		})
 
 		if sErr != nil {
@@ -284,6 +341,9 @@ func (a *Agent) run(ctx context.Context, text string, ch chan<- Event) {
 		}
 		if usage != nil {
 			contextTokens = usage.PromptTokens
+			if usage.PromptTokens > 0 && promptEstimate > 0 {
+				a.tokenRatios[chatClient.ModelKey(dec.Role.Model)] = float64(usage.PromptTokens) / float64(promptEstimate)
+			}
 			total.PromptTokens += usage.PromptTokens
 			total.CompletionTokens += usage.CompletionTokens
 			total.TotalTokens += usage.TotalTokens
@@ -352,4 +412,21 @@ func (a *Agent) completeToolResults() {
 			}
 		}
 	}
+}
+
+func (a *Agent) chatClient(role config.Role) *openrouter.Client {
+	if role.Backend() == "opencode-go" {
+		return a.opencodeGo
+	}
+	if role.Backend() == "deepseek" {
+		return a.deepseek
+	}
+	return a.client
+}
+
+// SetSessionID keeps Go routing and prompt caching stable across saved-session resumes.
+func (a *Agent) SetSessionID(id string) { a.opencodeGo.SetSessionID(id) }
+
+func (a *Agent) ContextLength(ctx context.Context, model string) (int, error) {
+	return a.client.ContextLength(ctx, model)
 }
