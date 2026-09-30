@@ -29,6 +29,8 @@ type Decision struct {
 	Source        Source
 	Confidence    float64            // 0 when not from Jev
 	Probabilities map[string]float64 // nil when not from Jev
+	Usage         *openrouter.Usage  // reported routing request usage
+	Model         string             // routing model
 	Err           error              // set with SourceError
 }
 
@@ -98,14 +100,22 @@ func (r *Router) Route(ctx context.Context, state State) Decision {
 	if err != nil {
 		return fallback(SourceError, 0, nil, err)
 	}
+	usage := &openrouter.Usage{PromptTokens: resp.Usage.InputTokens, TotalTokens: resp.Usage.InputTokens, Cost: resp.Usage.Cost}
+	withUsage := func(d Decision) Decision {
+		d.Usage, d.Model = usage, resp.Model
+		if d.Model == "" {
+			d.Model = r.cfg.JevModel
+		}
+		return d
+	}
 	ans, ok := resp.Answers["role"]
 	if !ok {
-		return fallback(SourceError, 0, nil, errors.New("jev returned no answer for question \"role\""))
+		return withUsage(fallback(SourceError, 0, nil, errors.New("jev returned no answer for question \"role\"")))
 	}
 	role, ok := r.cfg.RoleByName(ans.Choice)
 	if !ok {
-		return fallback(SourceError, 0, ans.Probabilities,
-			fmt.Errorf("jev chose unknown role %q", ans.Choice))
+		return withUsage(fallback(SourceError, 0, ans.Probabilities,
+			fmt.Errorf("jev chose unknown role %q", ans.Choice)))
 	}
 	conf := 0.0
 	hasConfidence := false
@@ -117,10 +127,10 @@ func (r *Router) Route(ctx context.Context, state State) Decision {
 		hasConfidence = true
 	}
 	if hasConfidence && (math.IsNaN(conf) || math.IsInf(conf, 0) || conf < 0 || conf > 1) {
-		return fallback(SourceError, 0, ans.Probabilities, fmt.Errorf("jev returned invalid confidence %g", conf))
+		return withUsage(fallback(SourceError, 0, ans.Probabilities, fmt.Errorf("jev returned invalid confidence %g", conf)))
 	}
 	if (!hasConfidence && r.cfg.ConfidenceThreshold > 0) || conf < r.cfg.ConfidenceThreshold {
-		return fallback(SourceThreshold, conf, ans.Probabilities, nil)
+		return withUsage(fallback(SourceThreshold, conf, ans.Probabilities, nil))
 	}
-	return Decision{Role: role, Source: SourceJev, Confidence: conf, Probabilities: ans.Probabilities}
+	return withUsage(Decision{Role: role, Source: SourceJev, Confidence: conf, Probabilities: ans.Probabilities})
 }
