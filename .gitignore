@@ -6,3 +6,6 @@
 *.pem
 *.key
 .DS_Store
+
+# Temporary rendered showcase states
+/screenshots/.raw/
