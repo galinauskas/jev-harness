@@ -1,0 +1,26 @@
+name: Harness checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go mod verify
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: test -z "$(gofmt -l cmd internal)"
+  docker-isolation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: docker build -t jev-harness-sandbox:1 - < internal/tools/sandbox.Dockerfile
+      - run: go run ./cmd/jev sandbox prepare
+      - run: JEV_DOCKER_TEST=1 JEV_DOCKER_PROJECT_TEST=1 go test -v ./internal/tools -run TestLiveDocker
