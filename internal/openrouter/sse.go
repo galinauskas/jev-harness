@@ -39,11 +39,12 @@ func readStream(ctx context.Context, body io.ReadCloser, started time.Time, ch c
 	}()
 
 	var (
-		calls    []ToolCall
-		finish   string
-		usage    *Usage
-		retErr   error
-		received int
+		reasoning strings.Builder
+		calls     []ToolCall
+		finish    string
+		usage     *Usage
+		retErr    error
+		received  int
 	)
 
 	sc := bufio.NewScanner(body)
@@ -85,6 +86,7 @@ scanLoop:
 				finish = c.FinishReason
 			}
 			d := c.Delta
+			reasoning.WriteString(d.ReasoningContent)
 			if d.Content != "" {
 				if !emit(ctx, ch, StreamEvent{TextDelta: d.Content}) {
 					retErr = ctx.Err()
@@ -109,7 +111,7 @@ scanLoop:
 				if tc.Function.Name != "" {
 					dst.Function.Name = tc.Function.Name
 				}
-				if len(dst.Function.Arguments)+len(tc.Function.Arguments) > 3<<20 {
+				if len(dst.Function.Arguments)+len(tc.Function.Arguments) > maxToolArguments {
 					retErr = errors.New("tool arguments exceed 3 MiB")
 					break
 				}
@@ -137,32 +139,23 @@ scanLoop:
 		retErr = errors.New("stream ended without finish_reason")
 	}
 
-	if retErr == nil && len(calls) > 0 {
-		if finish != "tool_calls" {
-			retErr = errors.New("incomplete tool calls")
-		}
-		seen := make(map[string]bool)
-		for _, call := range calls {
-			if call.ID == "" || seen[call.ID] || call.Type != "function" || call.Function.Name == "" || !json.Valid([]byte(call.Function.Arguments)) {
-				retErr = errors.New("invalid or incomplete tool call")
-				break
-			}
-			seen[call.ID] = true
-		}
+	if retErr == nil {
+		retErr = validateToolCalls(calls, finish)
 	}
-	if retErr == nil && finish == "tool_calls" && len(calls) == 0 {
-		retErr = errors.New("missing tool calls")
+	if retErr != nil {
+		calls = nil
 	}
 
 	// Terminal event: unconditional send. The consumer drains until close
 	// even after ctx cancellation, so "aborted" can surface in the UI.
 	ch <- StreamEvent{
-		Done:      true,
-		ToolCalls: calls,
-		Finish:    finish,
-		Usage:     usage,
-		Err:       retErr,
-		Started:   started,
+		Done:             true,
+		ReasoningContent: reasoning.String(),
+		ToolCalls:        calls,
+		Finish:           finish,
+		Usage:            usage,
+		Err:              retErr,
+		Started:          started,
 	}
 }
 

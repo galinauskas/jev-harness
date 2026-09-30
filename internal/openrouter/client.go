@@ -20,17 +20,29 @@ type Client struct {
 	key  string
 	http *http.Client
 	// base is "https://openrouter.ai" normally; tests override it.
-	base string
+	base       string
+	chatPath   string
+	direct     bool
+	goProvider bool
+	sessionID  string
 }
 
 // New returns a Client with a bounded stream lifetime and no redirects.
 // Rejecting redirects prevents credentials being forwarded to another endpoint.
 func New(apiKey string) *Client {
 	return &Client{
-		key:  apiKey,
-		http: &http.Client{Timeout: 10 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		base: "https://openrouter.ai",
+		key:      apiKey,
+		http:     &http.Client{Timeout: 10 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		base:     "https://openrouter.ai",
+		chatPath: "/api/v1/chat/completions",
 	}
+}
+
+// NewDeepSeek uses the direct DeepSeek chat-completions API.
+func NewDeepSeek(apiKey string) *Client {
+	c := New(apiKey)
+	c.base, c.chatPath, c.direct = "https://api.deepseek.com", "/chat/completions", true
+	return c
 }
 
 // SetKey swaps the API key after a settings change.
@@ -43,6 +55,20 @@ func (c *Client) SetBaseURL(base string) { c.base = base }
 
 // ContextLength returns the model's context window in tokens.
 func (c *Client) ContextLength(ctx context.Context, model string) (int, error) {
+	if c.goProvider {
+		return c.goContextLength(model)
+	}
+	if c.direct {
+		// Published limits, rather than an OpenRouter-only metadata endpoint.
+		// https://api-docs.deepseek.com/quick_start/pricing/ (2026-09-30)
+		// Use 1,000,000 tokens conservatively for the documented 1M window.
+		switch deepSeekModelID(model) {
+		case "deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp":
+			return 1_000_000, nil
+		default:
+			return 0, fmt.Errorf("context window is not configured for DeepSeek model %q", model)
+		}
+	}
 	parts := strings.SplitN(model, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return 0, fmt.Errorf("invalid model id %q", model)
@@ -87,6 +113,13 @@ func (c *Client) newReq(ctx context.Context, url string, body any) (*http.Reques
 	req.Header.Set("Authorization", "Bearer "+c.apiKey())
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Title", "jev-harness")
+	if c.goProvider {
+		req.Header.Set("User-Agent", "jev-harness/1.0")
+		c.mu.RLock()
+		id := c.sessionID
+		c.mu.RUnlock()
+		req.Header.Set("x-opencode-session", id)
+	}
 	return req, nil
 }
 
@@ -113,8 +146,32 @@ func truncate(s string, n int) string {
 // immediately on non-2xx; otherwise the returned channel carries deltas and
 // one terminal Done event, then closes.
 func (c *Client) ChatStream(ctx context.Context, req ChatRequest) (<-chan StreamEvent, error) {
+	if strings.TrimSpace(c.apiKey()) == "" {
+		return nil, fmt.Errorf("API key is not set for the selected provider")
+	}
+	if c.goProvider {
+		return c.goChatStream(ctx, req)
+	}
+	req.Messages = append([]Message(nil), req.Messages...)
+	for i := range req.Messages {
+		if req.Messages[i].NativeProvider != "" {
+			req.Messages[i].ReasoningContent = ""
+		}
+		req.Messages[i].NativeProvider, req.Messages[i].NativeItems = "", nil
+	}
 	req.Stream = true
-	r, err := c.newReq(ctx, c.base+"/api/v1/chat/completions", req)
+	req.StreamOptions = &StreamOptions{IncludeUsage: true}
+	if c.direct {
+		req.Model = deepSeekModelID(req.Model)
+		req.StreamOptions = &StreamOptions{IncludeUsage: true}
+		req.Thinking = &ThinkingOptions{Type: "disabled"}
+		// Reasoning from other backends is not part of a non-thinking request.
+		req.Messages = append([]Message(nil), req.Messages...)
+		for i := range req.Messages {
+			req.Messages[i].ReasoningContent = ""
+		}
+	}
+	r, err := c.newReq(ctx, c.base+c.chatPath, req)
 	if err != nil {
 		return nil, err
 	}
@@ -131,8 +188,17 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest) (<-chan Stream
 	return ch, nil
 }
 
+// Accept an OpenRouter-style prefix on direct DeepSeek roles while keeping
+// OpenRouter requests and their model IDs unchanged.
+func deepSeekModelID(model string) string {
+	return strings.TrimPrefix(strings.TrimSpace(model), "deepseek/")
+}
+
 // Decide calls the Decisions API.
 func (c *Client) Decide(ctx context.Context, req DecisionsRequest) (*DecisionsResponse, error) {
+	if strings.TrimSpace(c.apiKey()) == "" {
+		return nil, fmt.Errorf("OpenRouter routing API key is not set")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	r, err := c.newReq(ctx, c.base+"/api/alpha/decisions", req)
@@ -152,4 +218,15 @@ func (c *Client) Decide(ctx context.Context, req DecisionsRequest) (*DecisionsRe
 		return nil, fmt.Errorf("decisions: decode: %w", err)
 	}
 	return &out, nil
+}
+
+// ModelKey keeps context estimates separate across providers and native aliases.
+func (c *Client) ModelKey(model string) string {
+	if c.goProvider {
+		return "opencode-go:" + goModelID(model)
+	}
+	if c.direct {
+		return "deepseek:" + deepSeekModelID(model)
+	}
+	return "openrouter:" + model
 }
