@@ -601,6 +601,9 @@ func (w *Workspace) Clone(dir string) (*Workspace, error) {
 		base[path] = f
 	}
 	clone := &Workspace{Source: w.Source, Dir: dir, Stage: stage, base: base, secrets: w.secrets}
+	if err = w.cloneCommandOutput(clone); err != nil {
+		return nil, err
+	}
 	if err = clone.save(manifest{Source: w.Source, Base: base}); err != nil {
 		return nil, err
 	}
