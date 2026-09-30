@@ -72,6 +72,7 @@ func (c *Client) goChatStream(ctx context.Context, req ChatRequest) (<-chan Stre
 				req.Messages[i].ReasoningContent = ""
 			}
 			req.Messages[i].NativeProvider, req.Messages[i].NativeItems = "", nil
+			req.Messages[i].Provider, req.Messages[i].Model = "", ""
 		}
 		body = req
 	}
@@ -84,7 +85,7 @@ func (c *Client) goChatStream(ctx context.Context, req ChatRequest) (<-chan Stre
 		r.Header.Set("anthropic-version", "2023-06-01")
 	}
 	started := time.Now()
-	resp, err := c.http.Do(r)
+	resp, err := c.do(r)
 	if err != nil {
 		return nil, err
 	}

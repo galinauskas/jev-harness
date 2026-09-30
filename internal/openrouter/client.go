@@ -79,7 +79,7 @@ func (c *Client) ContextLength(ctx context.Context, model string) (int, error) {
 		return 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey())
-	resp, err := c.http.Do(req)
+	resp, err := c.do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -158,6 +158,7 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest) (<-chan Stream
 			req.Messages[i].ReasoningContent = ""
 		}
 		req.Messages[i].NativeProvider, req.Messages[i].NativeItems = "", nil
+		req.Messages[i].Provider, req.Messages[i].Model = "", ""
 	}
 	req.Stream = true
 	req.StreamOptions = &StreamOptions{IncludeUsage: true}
@@ -176,7 +177,7 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest) (<-chan Stream
 		return nil, err
 	}
 	started := time.Now()
-	resp, err := c.http.Do(r)
+	resp, err := c.do(r)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +206,7 @@ func (c *Client) Decide(ctx context.Context, req DecisionsRequest) (*DecisionsRe
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.http.Do(r)
+	resp, err := c.do(r)
 	if err != nil {
 		return nil, err
 	}
