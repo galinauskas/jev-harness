@@ -8,7 +8,7 @@ import (
 
 // Version is the displayed build version. Release builds can override it with
 // -ldflags "-X jevharness/internal/tui.Version=...".
-var Version = "v0.1.0"
+var Version = "v0.2.0"
 
 var chatMark = []string{
 	"     ██ ▄██████ ██   ██ ██   ██ ▄█████▄ ██████▄ ▄█████▄ ▄██████ ▄█████▄ ▄█████▄",
