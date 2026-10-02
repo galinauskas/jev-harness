@@ -43,7 +43,23 @@ export OPENROUTER_API_KEY='your-trial-key'
 
 `inspect` allows file reads, file search and configured web search. It denies model-requested file changes and shell commands. Without `--mode inspect`, new sessions default to `develop`, which asks for approval before edits and commands. `--ephemeral` avoids saved conversation files and removes its temporary staged copy on orderly exit.
 
-Provider requests send conversation data outside your machine. Automatic classification sends the prompt and recent conversation to OpenRouter. The answering provider receives the conversation and tool results. A pinned role or a single enabled role bypasses classification.
+Provider requests send conversation data outside your machine. Automatic classification sends the prompt and recent conversation to OpenRouter. The answering provider receives the conversation and tool results. A pinned role or a single configured role bypasses classification.
+
+## Herdr
+
+Jev automatically appears as `jev` in [Herdr](https://herdr.dev/docs/add-herdr-support/) when launched in one of its panes. It reports `idle` while ready for input, `working` during a turn or compaction, and `blocked` for tool approval or interrupted-session recovery. Reports run in the background with short timeouts, coalesce pending changes and ignore Herdr failures. Quitting releases the pane. Outside Herdr, the integration does nothing.
+
+State reporting supports older Herdr versions, including 0.9.1. Automatic session restore requires Herdr 0.9.2 or later and a `jev` executable on the shell's `PATH`. Install it with `go install ./cmd/jev` and put the Go binary directory on your shell's `PATH`. Launching `./jev` still reports state; resume commands are omitted when `jev` cannot be found on `PATH`.
+
+Persistent sessions report `jev --resume <session-id>` with the current budgets and safe permission mode. Switching or forking sessions updates that command. Resume loads only sessions from the current project, restores history and usage, and keeps interrupted work blocked until `/recover`. Autonomous permissions reset to `develop`, as with the session picker. Ephemeral sessions can reopen a fresh agent but never advertise saved history.
+
+```sh
+jev --resume <session-id>
+herdr agent list
+herdr pane get "$HERDR_PANE_ID"
+```
+
+The integration sends only agent state, a generic block reason, session identity and resume arguments to the local Herdr CLI. It does not report prompts, tool arguments, API keys or conversation content.
 
 ## Commands and input
 

@@ -7,6 +7,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"jevharness/internal/router"
+	"jevharness/internal/session"
 )
 
 // saveSession reads agent state only while idle, after channel closure has
@@ -100,40 +101,45 @@ func (c chatModel) sessionKey(m tea.KeyPressMsg) (next chatModel, cmd tea.Cmd) {
 			c.status, c.statusIsErr = "session belongs to another working directory", true
 			return c, nil
 		}
-		c.ag.Restore(v.Messages, v.Pinned)
-		c.ag.SetSessionID(v.ID)
-		c.ag.ResetPermissions()
-		c.yolo = false
-		c.reviewed = ""
-		c.recovery = v.Running || v.PendingTool != ""
-		c.ag.SetPersistence(v)
-		c.sessionID, c.sessionTitle, c.sessionUpdated = v.ID, v.Title, v.Updated
-		c.transcript.Reset()
-		if v.Transcript != "" {
-			c.transcript.WriteString(safeTranscript(v.Transcript))
-		} else {
-			for _, m := range v.Messages {
-				c.transcript.WriteString(safeText(m.Role+": "+m.Content) + "\n")
-			}
-		}
-		if c.recovery {
-			c.transcript.WriteString("Interrupted session: inspect /changes and acknowledge with /recover. Pending tools will not be replayed.\n")
-		}
-		c.pending.Reset()
-		c.lastDec = nil
-		if v.LastRole.Model != "" {
-			c.lastDec = &router.Decision{Role: v.LastRole}
-		}
-		c.tokensIn, c.tokensOut, c.cost, c.turns = v.TokensIn, v.TokensOut, v.Cost, v.Turns
-		c.contextUsed, c.contextModel = v.ContextUsed, v.ContextModel
-		c.models = v.Models
-		c.sessionPicker, c.sessionList = false, nil
-		c.status, c.statusIsErr = "resumed: "+v.Title, false
-		c.refreshVP()
-		c.vp.GotoBottom()
+		c.restoreSession(v)
 		return c, c.requestContext()
 	}
 	return c, nil
+}
+
+// restoreSession is shared by the picker and CLI resume.
+func (c *chatModel) restoreSession(v session.Session) {
+	c.ag.Restore(v.Messages, v.Pinned)
+	c.ag.SetSessionID(v.ID)
+	c.ag.ResetPermissions()
+	c.yolo = false
+	c.reviewed = ""
+	c.recovery = v.Running || v.PendingTool != ""
+	c.ag.SetPersistence(v)
+	c.sessionID, c.sessionTitle, c.sessionUpdated = v.ID, v.Title, v.Updated
+	c.transcript.Reset()
+	if v.Transcript != "" {
+		c.transcript.WriteString(safeTranscript(v.Transcript))
+	} else {
+		for _, m := range v.Messages {
+			c.transcript.WriteString(safeText(m.Role+": "+m.Content) + "\n")
+		}
+	}
+	if c.recovery {
+		c.transcript.WriteString("Interrupted session: inspect /changes and acknowledge with /recover. Pending tools will not be replayed.\n")
+	}
+	c.pending.Reset()
+	c.lastDec = nil
+	if v.LastRole.Model != "" {
+		c.lastDec = &router.Decision{Role: v.LastRole}
+	}
+	c.tokensIn, c.tokensOut, c.cost, c.turns = v.TokensIn, v.TokensOut, v.Cost, v.Turns
+	c.contextUsed, c.contextModel = v.ContextUsed, v.ContextModel
+	c.models = v.Models
+	c.sessionPicker, c.sessionList = false, nil
+	c.status, c.statusIsErr = "resumed: "+v.Title, false
+	c.refreshVP()
+	c.vp.GotoBottom()
 }
 
 func (c chatModel) sessionsView() string {

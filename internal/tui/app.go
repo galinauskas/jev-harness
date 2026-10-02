@@ -7,6 +7,7 @@ import (
 
 	"jevharness/internal/agent"
 	"jevharness/internal/config"
+	"jevharness/internal/herdr"
 )
 
 type mode int
@@ -47,13 +48,15 @@ func (a *App) Stop() {
 // App is the root model. It owns the config and routes messages to the
 // active screen.
 type App struct {
-	agent    *agent.Agent
-	cfg      config.Config
-	cwd      string
-	mode     mode
-	chat     chatModel
-	settings settingsModel
-	w, h     int
+	agent         *agent.Agent
+	cfg           config.Config
+	cwd           string
+	mode          mode
+	chat          chatModel
+	settings      settingsModel
+	herdrReporter interface{ Report(herdr.Snapshot) }
+	herdrSession  string
+	w, h          int
 }
 
 // New builds the root model.
@@ -74,10 +77,14 @@ func (a *App) SetStatus(msg string, isErr bool) {
 }
 
 // Init implements tea.Model.
-func (a *App) Init() tea.Cmd { return a.chat.requestContext() }
+func (a *App) Init() tea.Cmd {
+	a.reportHerdr()
+	return a.chat.requestContext()
+}
 
 // Update implements tea.Model.
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	defer a.reportHerdr()
 	switch m := msg.(type) {
 	case ShutdownMsg:
 		var cmd tea.Cmd

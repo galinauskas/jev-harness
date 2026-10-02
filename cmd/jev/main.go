@@ -21,6 +21,7 @@ import (
 
 	"jevharness/internal/agent"
 	"jevharness/internal/config"
+	"jevharness/internal/herdr"
 	"jevharness/internal/openrouter"
 	"jevharness/internal/router"
 	"jevharness/internal/tui"
@@ -36,6 +37,7 @@ func main() {
 	}
 	args := os.Args[1:]
 	flags := flag.NewFlagSet("jev", flag.ExitOnError)
+	resume := flags.String("resume", "", "resume a saved session in the current project")
 	mode := flags.String("mode", "", "inspect, develop or autonomous (resets on session changes)")
 	flags.BoolVar(&cfg.Safety.Ephemeral, "ephemeral", cfg.Safety.Ephemeral, "do not persist conversation or staged workspace")
 	flags.IntVar(&cfg.Limits.OutputTokens, "output-tokens", cfg.Limits.OutputTokens, "maximum output tokens per request")
@@ -50,6 +52,9 @@ func main() {
 		fatal("%s", err)
 	}
 	args = flags.Args()
+	if *resume != "" && (len(args) > 0 || cfg.Safety.Ephemeral) {
+		fatal("--resume requires a persistent interactive session")
+	}
 	cfg.ApplyDefaults()
 	if err := cfg.Validate(); err != nil {
 		fatal("%s", err)
@@ -138,17 +143,28 @@ func main() {
 
 	ag := agent.New(client, r, cfg, cwd)
 	defer ag.Cleanup()
-	if *mode != "" {
-		if err := ag.SetMode(*mode); err != nil {
-			fatal("%s", err)
-		}
-	}
 	if !cfg.Safety.Ephemeral {
 		if err := session.DefaultStore().Prune(cfg.Safety.RetentionDays); err != nil {
 			fatal("session retention: %s", err)
 		}
 	}
 	app := tui.New(ag, cfg, cwd)
+	if *resume != "" {
+		if err := app.ResumeSession(*resume); err != nil {
+			ag.Cleanup()
+			fatal("resume: %s", err)
+		}
+	}
+	if *mode != "" {
+		if err := ag.SetMode(*mode); err != nil {
+			fatal("%s", err)
+		}
+	}
+	reporter := herdr.NewFromEnvironment()
+	defer reporter.Close()
+	if reporter != nil {
+		app.SetHerdrReporter(reporter)
+	}
 	if key == "" {
 		app.SetStatus("OpenRouter routing key not set — configure /settings (g), or pin a direct-provider role", true)
 	}
@@ -168,6 +184,7 @@ func main() {
 	if _, err := p.Run(); err != nil {
 		app.Stop()
 		ag.Cleanup()
+		reporter.Close()
 		fatal("tui: %v", err)
 	}
 }
