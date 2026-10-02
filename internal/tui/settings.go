@@ -79,6 +79,35 @@ func (s *settingsModel) switchTab(tab int) {
 	s.clearMessage()
 }
 func (s settingsModel) Update(msg tea.Msg) (settingsModel, tea.Cmd) {
+	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
+		delta := 0
+		switch wheel.Button {
+		case tea.MouseWheelUp:
+			delta = -1
+		case tea.MouseWheelDown:
+			delta = 1
+		}
+		if delta == 0 {
+			return s, nil
+		}
+		switch s.mode {
+		case sList:
+			next := max(0, min(s.selectedRow()+delta, len(s.rows())-1))
+			if s.tab == settingsRoles {
+				s.cursor = next
+			} else {
+				s.rowCursor = next
+			}
+			s.clearMessage()
+		case sHelp:
+			s.helpCursor = max(0, min(s.helpCursor+delta, len(settingsHelpLines(max(1, s.boxWidth()-6)))-1))
+		case sDefaultRole:
+			s.choiceCursor = max(0, min(s.choiceCursor+delta, len(s.cfg.Roles)-1))
+		case sSearchProvider:
+			s.choiceCursor = max(0, min(s.choiceCursor+delta, 1))
+		}
+		return s, nil
+	}
 	switch s.mode {
 	case sRoleForm, sValueForm:
 		return s.updateForm(msg)

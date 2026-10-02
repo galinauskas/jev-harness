@@ -193,6 +193,19 @@ func (c *chatModel) refreshVP() {
 
 func (c chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 	switch m := msg.(type) {
+	case tea.MouseWheelMsg:
+		if c.sessionPicker {
+			switch m.Button {
+			case tea.MouseWheelUp:
+				c.sessionCursor = max(0, c.sessionCursor-1)
+			case tea.MouseWheelDown:
+				c.sessionCursor = min(len(c.sessionList), c.sessionCursor+1)
+			}
+			return c, nil
+		}
+		var cmd tea.Cmd
+		c.vp, cmd = c.vp.Update(m)
+		return c, cmd
 	case tea.KeyPressMsg:
 		oldValue := c.ta.Value()
 		oldSuggestions := c.commandSuggestionsView()
