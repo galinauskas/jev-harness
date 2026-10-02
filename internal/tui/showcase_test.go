@@ -73,7 +73,6 @@ func TestShowcase(t *testing.T) {
 	settings := func(name string, setup func(*settingsModel)) {
 		c := newDemo()
 		s := newSettings(c.ag, cfg, 112, 34)
-		s.cwd = "/demo/throwaway-project"
 		setup(&s)
 		write(name, s.View())
 	}

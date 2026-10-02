@@ -20,7 +20,6 @@ const (
 	SourceThreshold Source = "threshold" // below threshold -> default role
 	SourceError     Source = "jev-error" // Decide failed -> default role
 	SourceSingle    Source = "single"    // only one role configured
-	SourceDefault   Source = "default"   // classifier disabled -> enabled default role
 	SourcePinned    Source = "pinned"    // /role <name>
 )
 
@@ -137,27 +136,4 @@ func (r *Router) Route(ctx context.Context, state State) Decision {
 		return withUsage(fallback(SourceThreshold, conf, ans.Probabilities, nil))
 	}
 	return withUsage(Decision{Role: role, Source: SourceJev, Confidence: conf, Probabilities: ans.Probabilities})
-}
-
-// RouteProject excludes forbidden providers before classification and fallback.
-func (r *Router) RouteProject(ctx context.Context, cwd string, state State) Decision {
-	cfg := r.cfg
-	cfg.ApplyDefaults()
-	cfg.Roles = nil
-	for _, role := range r.cfg.Roles {
-		if cfg.ProviderAllowed(cwd, role.Backend()) {
-			cfg.Roles = append(cfg.Roles, role)
-		}
-	}
-	if len(cfg.Roles) == 0 {
-		return Decision{Source: SourceError, Err: errors.New("no role provider enabled; restore providers in /settings → Providers")}
-	}
-	if len(cfg.Roles) > 1 && !cfg.ProviderAllowed(cwd, "openrouter") {
-		role, ok := cfg.RoleByName(cfg.DefaultRole)
-		if !ok {
-			role = cfg.Roles[0]
-		}
-		return Decision{Role: role, Source: SourceDefault}
-	}
-	return New(r.client, cfg).Route(ctx, state)
 }

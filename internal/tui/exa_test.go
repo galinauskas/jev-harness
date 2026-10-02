@@ -21,15 +21,3 @@ func TestExaSettingsMask(t *testing.T) {
 		t.Fatal("Exa settings not masked")
 	}
 }
-
-func TestExaSettingsShowsBlockedKey(t *testing.T) {
-	cfg := config.Default()
-	cfg.ExaAPIKey = "saved-exa-secret"
-	cfg.Safety.AllowedProviders = []string{"openrouter"}
-	s := newSettings(nil, cfg, 140, 50)
-	s.tab = 3
-	view := s.View()
-	if !strings.Contains(view, "Disabled in settings") || strings.Contains(view, cfg.ExaAPIKey) {
-		t.Fatal("blocked saved key is not clearly indicated")
-	}
-}

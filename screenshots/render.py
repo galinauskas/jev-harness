@@ -7,6 +7,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--font', default='/System/Library/Fonts/Menlo.ttc')
+parser.add_argument('--capture', action='append', help='Render only this capture stem (repeatable).')
+parser.add_argument('--date', default='30 September 2026', help='Capture date shown beneath each image.')
 args = parser.parse_args()
 root = Path(__file__).resolve().parent
 font = ImageFont.truetype(args.font, 16)
@@ -24,7 +26,10 @@ def colour(n):
     levels = [0,95,135,175,215,255]
     return levels[n//36], levels[n//6%6], levels[n%6]
 
-for src in sorted((root / '.raw').glob('*.ansi')):
+sources = sorted((root / '.raw').glob('*.ansi'))
+if args.capture:
+    sources = [src for src in sources if src.stem in args.capture]
+for src in sources:
     im = Image.new('RGB', (width, height), base)
     draw = ImageDraw.Draw(im)
     draw.text((pad, 18), 'jev-harness  /  ' + src.stem, font=small, fill=(153,168,191))
@@ -60,22 +65,23 @@ for src in sorted((root / '.raw').glob('*.ansi')):
                 if bold: draw.text((x+0.4,y), char, font=font, fill=fg)
                 x += cw
     draw.line((pad, height-43, width-pad, height-43), fill=(55,62,74))
-    caption = 'Current TUI renderer | Demo data | No live model requests | 30 September 2026'
+    caption = f'Current TUI renderer | Demo data | No live model requests | {args.date}'
     if src.stem.startswith(('27-', '28-')):
-        caption = 'Current TUI renderer | Actual staged operation on disposable files | 30 September 2026'
+        caption = f'Current TUI renderer | Actual staged operation on disposable files | {args.date}'
     draw.text((pad,height-30), caption, font=small, fill=(153,168,191))
     im.save(root / (src.stem + '.png'))
     with Image.open(root / (src.stem + '.png')) as check: check.verify()
 
 # Overview uses the same rendered routing captures, without invented charts.
-files = ['02-auto-routing-and-code','03-complex-task-routing','04-confidence-fallback','05-pinned-role']
-thumbs = []
-for name in files:
-    im = Image.open(root / (name+'.png'))
-    im.thumbnail((800,650))
-    thumbs.append(im.copy())
-w, h = thumbs[0].size
-board = Image.new('RGB',(w*2+18,h*2+18),base)
-for i, im in enumerate(thumbs): board.paste(im,((i%2)*(w+18),(i//2)*(h+18)))
-board.save(root / 'routing-overview.png')
-print(f'Rendered {len(list((root / ".raw").glob("*.ansi"))) + 1} PNGs.')
+if not args.capture:
+    files = ['02-auto-routing-and-code','03-complex-task-routing','04-confidence-fallback','05-pinned-role']
+    thumbs = []
+    for name in files:
+        im = Image.open(root / (name+'.png'))
+        im.thumbnail((800,650))
+        thumbs.append(im.copy())
+    w, h = thumbs[0].size
+    board = Image.new('RGB',(w*2+18,h*2+18),base)
+    for i, im in enumerate(thumbs): board.paste(im,((i%2)*(w+18),(i//2)*(h+18)))
+    board.save(root / 'routing-overview.png')
+print(f'Rendered {len(sources) + (0 if args.capture else 1)} PNGs.')

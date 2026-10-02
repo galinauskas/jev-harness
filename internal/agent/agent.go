@@ -96,10 +96,10 @@ func (a *Agent) system() openrouter.Message {
 }
 
 func (a *Agent) systemForRole(role config.Role) openrouter.Message {
-	search := "Web search is " + a.cfg.WebSearchStatus(a.cwd) + ". Do not invent current facts or claim to have searched."
+	search := "Web search is " + a.cfg.WebSearchStatus() + ". Do not invent current facts or claim to have searched."
 	if role.DisableTools {
 		search = "Tools, including web_search, are disabled for this role. Explain this limitation when a request requires current information."
-	} else if a.cfg.WebSearchStatus(a.cwd) == "available" {
+	} else if a.cfg.WebSearchStatus() == "available" {
 		search = "You have live web access through the web_search tool backed by " + a.cfg.WebSearchProvider() + ". Use web_search for current or time-sensitive information, including today's weather, news, prices and schedules. You can answer general questions and web lookups as well as coding tasks. Do not claim you lack web access or refuse a lookup because this is a coding workspace. Cite the returned source URLs, check dates and distinguish current observations from forecasts or older pages. If search fails or does not establish the requested facts, explain that specific limitation."
 	}
 	shell := "Shell commands run locally in the staged directory with normal host and network access; they can access or change files outside that directory. Use relative workspace paths for project edits."
@@ -185,12 +185,8 @@ func (a *Agent) Restore(msgs []openrouter.Message, pinned string) {
 // ContextLookup captures the client while idle, before a background lookup.
 // The returned function only touches the client's synchronised state.
 func (a *Agent) ContextLookup(role config.Role) func(context.Context) (int, error) {
-	allowed := a.cfg.ProviderAllowed(a.cwd, role.Backend())
 	client := a.chatClient(role)
 	return func(ctx context.Context) (int, error) {
-		if !allowed {
-			return 0, fmt.Errorf("provider disabled; enable it in /settings → Providers")
-		}
 		if client == nil {
 			return 0, fmt.Errorf("provider client is unavailable")
 		}
@@ -299,17 +295,17 @@ func (a *Agent) run(ctx context.Context, text string, ch chan<- Event) {
 			dec = router.Decision{Role: role, Source: router.SourcePinned, Confidence: 1}
 		} else {
 			// pinned role was deleted; fall back to routing
-			dec = a.router.RouteProject(ctx, a.cwd, router.State{Message: a.redactor().Text(text), RecentTurns: recent})
+			dec = a.router.Route(ctx, router.State{Message: a.redactor().Text(text), RecentTurns: recent})
 		}
 	} else {
-		dec = a.router.RouteProject(ctx, a.cwd, router.State{Message: a.redactor().Text(text), RecentTurns: recent})
+		dec = a.router.Route(ctx, router.State{Message: a.redactor().Text(text), RecentTurns: recent})
 	}
 	a.send(ch, Event{Kind: Routed, Decision: &dec})
 	if dec.Usage != nil {
 		a.send(ch, Event{Kind: UsageRecorded, Model: "openrouter:" + dec.Model, Usage: dec.Usage})
 	}
-	if dec.Role.Name == "" || !a.cfg.ProviderAllowed(a.cwd, dec.Role.Backend()) {
-		a.send(ch, Event{Kind: Error, Text: "routing failed: no enabled role available; restore providers in /settings → Providers"})
+	if dec.Role.Name == "" {
+		a.send(ch, Event{Kind: Error, Text: "routing failed: no role available; configure roles in /settings → Roles"})
 		return
 	}
 
@@ -318,12 +314,10 @@ func (a *Agent) run(ctx context.Context, text string, ch chan<- Event) {
 	cacheKey := dec.Role.Backend() + ":" + dec.Role.Model
 	var webSearch *tools.WebSearch
 	searchProvider := a.cfg.WebSearchProvider()
-	if a.cfg.ProviderAllowed(a.cwd, searchProvider) {
-		if searchProvider == "brave" {
-			webSearch = tools.NewBrave(a.cfg.ProviderKey(searchProvider))
-		} else {
-			webSearch = tools.NewExa(a.cfg.ProviderKey(searchProvider))
-		}
+	if searchProvider == "brave" {
+		webSearch = tools.NewBrave(a.cfg.ProviderKey(searchProvider))
+	} else {
+		webSearch = tools.NewExa(a.cfg.ProviderKey(searchProvider))
 	}
 	if webSearch != nil {
 		webSearch.OnUsage = func(u *openrouter.Usage) {
@@ -636,8 +630,5 @@ func (k Kind) String() string {
 	return names[k]
 }
 
-// WebSearchStatus reports the effective project policy and key availability.
-func (a *Agent) WebSearchStatus() string { return a.cfg.WebSearchStatus(a.cwd) }
-
-// ProjectDirectory is the canonical directory used for project settings.
-func (a *Agent) ProjectDirectory() string { return a.cwd }
+// WebSearchStatus reports availability of the default search provider.
+func (a *Agent) WebSearchStatus() string { return a.cfg.WebSearchStatus() }

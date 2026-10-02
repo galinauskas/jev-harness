@@ -46,13 +46,11 @@ type Config struct {
 
 // Safety settings are user-owned. Repository instructions cannot broaden them.
 type SafetyConfig struct {
-	DockerSandbox    bool                `json:"docker_sandbox,omitempty"` // experimental, opt-in
-	Mode             string              `json:"mode"`
-	SandboxImage     string              `json:"sandbox_image"`
-	AllowedProviders []string            `json:"allowed_providers"`
-	Projects         map[string][]string `json:"projects,omitempty"`
-	Ephemeral        bool                `json:"ephemeral,omitempty"`
-	RetentionDays    int                 `json:"retention_days,omitempty"`
+	DockerSandbox bool   `json:"docker_sandbox,omitempty"` // experimental, opt-in
+	Mode          string `json:"mode"`
+	SandboxImage  string `json:"sandbox_image"`
+	Ephemeral     bool   `json:"ephemeral,omitempty"`
+	RetentionDays int    `json:"retention_days,omitempty"`
 }
 
 type Limits struct {
@@ -69,9 +67,6 @@ func (c *Config) ApplyDefaults() {
 	if c.Safety.SandboxImage == "" {
 		c.Safety.SandboxImage = "jev-harness-sandbox:1"
 	}
-	if c.Safety.AllowedProviders == nil {
-		c.Safety.AllowedProviders = []string{"openrouter", "deepseek", "opencode-go", "exa", "brave"}
-	}
 	if c.Limits.OutputTokens == 0 {
 		c.Limits.OutputTokens = 8192
 	}
@@ -81,19 +76,6 @@ func (c *Config) ApplyDefaults() {
 	if c.Limits.Seconds == 0 {
 		c.Limits.Seconds = 600
 	}
-}
-
-func (c Config) ProviderAllowed(cwd, provider string) bool {
-	allowed := c.Safety.AllowedProviders
-	if project, ok := c.Safety.Projects[cwd]; ok {
-		allowed = project
-	}
-	for _, p := range allowed {
-		if p == provider {
-			return true
-		}
-	}
-	return false
 }
 
 // StatusLineConfig stores hidden items so older configs keep all items visible.
@@ -231,13 +213,6 @@ func (c Config) Validate() error {
 	if c.Safety.RetentionDays < 0 {
 		errs = append(errs, "retention_days must be nonnegative")
 	}
-	for _, list := range append([][]string{c.Safety.AllowedProviders}, projectProviderLists(c.Safety.Projects)...) {
-		for _, provider := range list {
-			if provider != "openrouter" && provider != "deepseek" && provider != "opencode-go" && provider != "exa" && provider != "brave" {
-				errs = append(errs, "unknown allowed provider: "+provider)
-			}
-		}
-	}
 	if len(c.Roles) == 0 {
 		errs = append(errs, "at least one role is required")
 	}
@@ -323,25 +298,6 @@ func (c Config) ProviderKey(provider string) string {
 	return strings.TrimSpace(os.Getenv(env))
 }
 
-func projectProviderLists(projects map[string][]string) [][]string {
-	var lists [][]string
-	for _, p := range projects {
-		lists = append(lists, p)
-	}
-	return lists
-}
-
-// ExaSearchStatus explains the effective project capability without revealing keys.
-func (c Config) ExaSearchStatus(cwd string) string {
-	if !c.ProviderAllowed(cwd, "exa") {
-		return "disabled in settings (enable exa in /settings → Providers)"
-	}
-	if c.ProviderKey("exa") == "" {
-		return "unavailable: set the Exa key in /settings or EXA_API_KEY"
-	}
-	return "available"
-}
-
 // WebSearchProvider preserves Exa for older configurations.
 func (c Config) WebSearchProvider() string {
 	if c.SearchProvider == "" {
@@ -350,11 +306,8 @@ func (c Config) WebSearchProvider() string {
 	return c.SearchProvider
 }
 
-func (c Config) WebSearchStatus(cwd string) string {
+func (c Config) WebSearchStatus() string {
 	provider := c.WebSearchProvider()
-	if !c.ProviderAllowed(cwd, provider) {
-		return "disabled in settings (enable " + provider + " in /settings → Providers)"
-	}
 	if c.ProviderKey(provider) == "" {
 		if provider == "brave" {
 			return "unavailable: set the Brave key in /settings or BRAVE_API_KEY"

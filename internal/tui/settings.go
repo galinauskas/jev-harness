@@ -40,7 +40,6 @@ var roleProviders = []string{"openrouter", "deepseek", "opencode-go"}
 type settingsModel struct {
 	ag                       *agent.Agent
 	cfg                      config.Config
-	cwd                      string
 	mode                     sMode
 	tab, rowCursor, cursor   int
 	positions                [5]int
@@ -55,11 +54,7 @@ type settingsModel struct {
 }
 
 func newSettings(ag *agent.Agent, cfg config.Config, w, h int) settingsModel {
-	cwd := ""
-	if ag != nil {
-		cwd = ag.ProjectDirectory()
-	}
-	return settingsModel{ag: ag, cfg: cfg, cwd: cwd, w: w, h: h, editingIdx: -1}
+	return settingsModel{ag: ag, cfg: cfg, w: w, h: h, editingIdx: -1}
 }
 func (s *settingsModel) resize(w, h int) {
 	s.w, s.h = w, h
@@ -155,25 +150,6 @@ func (s settingsModel) updateList(msg tea.Msg) (settingsModel, tea.Cmd) {
 			return s, nil
 		}
 		row := s.rows()[s.rowCursor]
-		if strings.HasPrefix(row.action, "provider:") {
-			provider := strings.TrimPrefix(row.action, "provider:")
-			enabled := !s.cfg.ProviderAllowed(s.cwd, provider)
-			cfg := s.withProviderEnabled(provider, enabled)
-			if !enabled {
-				hasRole := false
-				for _, role := range cfg.Roles {
-					hasRole = hasRole || cfg.ProviderAllowed(s.cwd, role.Backend())
-				}
-				if !hasRole {
-					return fail("Keep a provider enabled for at least one role. Configure roles in the Roles tab.")
-				}
-			}
-			return s.applyConfig(cfg, row.label+" "+settingOn(enabled))
-		}
-		if row.action == "restore-providers" {
-			cfg := s.withProviderList(config.Default().Safety.AllowedProviders)
-			return s.applyConfig(cfg, "Providers restored for this project")
-		}
 		switch row.action {
 		case "t", "b", "x":
 			return s.updateList(tea.KeyPressMsg{Code: rune(row.action[0])})
@@ -303,7 +279,7 @@ func (s settingsModel) updateChoice(msg tea.Msg) (settingsModel, tea.Cmd) {
 		message := ""
 		if s.mode == sSearchProvider {
 			cfg.SearchProvider = []string{"exa", "brave"}[s.choiceCursor]
-			message = "Search provider: " + cfg.SearchProvider
+			message = "Default web_search provider: " + cfg.SearchProvider
 		} else if s.mode == sDefaultRole {
 			cfg.DefaultRole = cfg.Roles[s.choiceCursor].Name
 			message = "Default role: " + cfg.DefaultRole
@@ -495,38 +471,4 @@ func (s settingsModel) saveForm() (settingsModel, tea.Cmd) {
 		m.mode, m.inputs = sList, nil
 	}
 	return m, cmd
-}
-
-// Copy lists and maps before editing so cancellation/save failures and other
-// projects retain their original provider settings.
-func (s settingsModel) withProviderList(list []string) config.Config {
-	cfg := s.cfg
-	list = append([]string(nil), list...)
-	if s.cwd == "" {
-		cfg.Safety.AllowedProviders = list
-		return cfg
-	}
-	cfg.Safety.Projects = make(map[string][]string, len(s.cfg.Safety.Projects)+1)
-	for path, providers := range s.cfg.Safety.Projects {
-		cfg.Safety.Projects[path] = append([]string(nil), providers...)
-	}
-	cfg.Safety.Projects[s.cwd] = list
-	return cfg
-}
-
-func (s settingsModel) withProviderEnabled(provider string, enabled bool) config.Config {
-	list := s.cfg.Safety.AllowedProviders
-	if project, ok := s.cfg.Safety.Projects[s.cwd]; ok {
-		list = project
-	}
-	updated := make([]string, 0, len(list)+1)
-	for _, p := range list {
-		if p != provider {
-			updated = append(updated, p)
-		}
-	}
-	if enabled {
-		updated = append(updated, provider)
-	}
-	return s.withProviderList(updated)
 }

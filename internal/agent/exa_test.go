@@ -16,21 +16,24 @@ type exaTransport func(*http.Request) (*http.Response, error)
 
 func (f exaTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestExaAgentLoopPolicyAndBudget(t *testing.T)   { testSearchAgentLoopPolicyAndBudget(t, "exa") }
-func TestBraveAgentLoopPolicyAndBudget(t *testing.T) { testSearchAgentLoopPolicyAndBudget(t, "brave") }
+func TestExaAgentLoopAvailabilityAndBudget(t *testing.T) {
+	testSearchAgentLoopAvailabilityAndBudget(t, "exa")
+}
+func TestBraveAgentLoopAvailabilityAndBudget(t *testing.T) {
+	testSearchAgentLoopAvailabilityAndBudget(t, "brave")
+}
 
-func testSearchAgentLoopPolicyAndBudget(t *testing.T, provider string) {
+func testSearchAgentLoopAvailabilityAndBudget(t *testing.T, provider string) {
 	t.Setenv("EXA_API_KEY", "")
 	t.Setenv("BRAVE_API_KEY", "")
 	for _, tc := range []struct {
-		name                               string
-		key, allowed, disableTools, budget bool
+		name                      string
+		key, disableTools, budget bool
 	}{
-		{name: "enabled", key: true, allowed: true},
-		{name: "no-key", allowed: true},
-		{name: "forbidden", key: true},
-		{name: "tools-disabled", key: true, allowed: true, disableTools: true},
-		{name: "spending-budget", key: true, allowed: true, budget: true},
+		{name: "enabled", key: true},
+		{name: "no-key"},
+		{name: "tools-disabled", key: true, disableTools: true},
+		{name: "spending-budget", key: true, budget: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			searches, completions := 0, 0
@@ -61,7 +64,7 @@ func testSearchAgentLoopPolicyAndBudget(t *testing.T, provider string) {
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					t.Fatal(err)
 				}
-				enabled := tc.key && tc.allowed && !tc.disableTools
+				enabled := tc.key && !tc.disableTools
 				found := false
 				for _, def := range req.Tools {
 					found = found || def.Function.Name == "web_search"
@@ -116,9 +119,6 @@ func testSearchAgentLoopPolicyAndBudget(t *testing.T, provider string) {
 			} else {
 				a.cfg.BraveAPIKey = "saved-brave-secret"
 			}
-			if !tc.allowed {
-				a.cfg.Safety.Projects = map[string][]string{a.cwd: {"openrouter"}}
-			}
 			a.cfg.Roles[0].DisableTools = tc.disableTools
 			if tc.budget {
 				a.cfg.Limits.Cost = 0.004
@@ -138,7 +138,7 @@ func testSearchAgentLoopPolicyAndBudget(t *testing.T, provider string) {
 				done = done || ev.Kind == TurnDone
 			}
 			wantSearches := 0
-			if tc.key && tc.allowed && !tc.disableTools {
+			if tc.key && !tc.disableTools {
 				wantSearches = 1
 			}
 			if searches != wantSearches {

@@ -12,8 +12,6 @@ import (
 func routeLine(d router.Decision) string {
 	var src string
 	switch d.Source {
-	case router.SourceDefault:
-		src = "default: automatic routing disabled"
 	case router.SourcePinned:
 		src = "pinned"
 	case router.SourceJev:

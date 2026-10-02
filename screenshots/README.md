@@ -2,7 +2,7 @@
 
 **Not recommended for use.** These captures document an experimental terminal agent. Local shell commands have host filesystem and network access. The optional Docker sandbox is experimental and off by default.
 
-All 30 PNGs were regenerated on 30 September 2026 from the current TUI renderer. They are rendered interface fixtures, not recordings of live model sessions. Task text, routing choices, confidence, answers, command output and usage are demo data. No model or search provider requests were made. The diff and apply captures execute actual staged operations on disposable files.
+All 30 PNGs were regenerated on 30 September 2026; the provider settings and search picker were refreshed on 2 October 2026. Captures use the TUI renderer. They are rendered interface fixtures, not recordings of live model sessions. Task text, routing choices, confidence, answers, command output and usage are demo data. No model or search provider requests were made. The diff and apply captures execute actual staged operations on disposable files.
 
 ## Current workflow
 
@@ -10,7 +10,7 @@ The Appearance tab shows the shell-backend setting and compact-output option.
 
 ![Appearance settings](09-settings-overview.png)
 
-The Providers tab includes Exa and Brave, the selected search provider and project-specific permissions.
+The Providers tab includes Exa and Brave, a default search provider for all projects.
 
 ![Provider settings](24-provider-settings.png)
 
@@ -56,7 +56,7 @@ An interrupted session blocks ordinary task submission until recovery acknowledg
 | [Context compaction](21-context-compaction.png) | A demo summary notice |
 | [Provider roles](22-provider-roles.png) | Roles mapped to OpenRouter, direct DeepSeek and OpenCode Go |
 | [Direct provider](23-direct-provider.png) | A pinned direct DeepSeek role |
-| [Provider settings](24-provider-settings.png) | All supported provider toggles with Brave search selected |
+| [Provider settings](24-provider-settings.png) | API keys and the default web_search provider, with Brave selected |
 | [Search provider chooser](25-search-provider.png) | Exa and Brave choices |
 | [Compact command output](26-compact-command-output.png) | Compact output enabled in Appearance |
 | [Staged changes](27-staged-changes.png) | Actual diff from a disposable file edit |
@@ -75,3 +75,5 @@ python3 screenshots/render.py --font /path/to/monospace.ttf
 ```
 
 On macOS, the renderer defaults to `/System/Library/Fonts/Menlo.ttc`. The fixture checks 112-column and 34-row bounds. The renderer decodes every generated PNG and builds the routing overview from the four routing captures. Raw ANSI output is ignored by Git.
+
+To refresh only provider settings and the search picker, pass `--capture 24-provider-settings --capture 25-search-provider --date "2 October 2026"` to the renderer.

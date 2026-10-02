@@ -28,7 +28,7 @@ File tools edit a private copy. `/changes` shows the current diff, and `/apply` 
 
 ![Current staged diff](screenshots/27-staged-changes.png)
 
-The [full gallery](screenshots/README.md) includes approvals, command output, roles, session browsing, compaction, apply and recovery. All 30 images were regenerated on 30 September 2026. The captures show interface behaviour, not measured model performance.
+The [full gallery](screenshots/README.md) includes approvals, command output, roles, session browsing, compaction, apply and recovery. All 30 images were regenerated on 30 September 2026; provider settings and the search picker were refreshed on 2 October 2026. The captures show interface behaviour, not measured model performance.
 
 ## Build and trial
 
@@ -79,9 +79,9 @@ In Roles, `n` adds a role, `d` asks to delete it, and `D` sets the default. Role
 
 Each role has a name, model ID, provider and criteria describing when Jev should choose it. Role JSON also accepts `context_window`, `output_limit` and `disable_tools`. The bundled defaults are examples, not model recommendations. Unknown model limits appear as unavailable.
 
-The Providers tab controls allowed services for the canonical project directory. Those choices live in user configuration. Settings prevent disabling the last provider used by your roles. Restore providers enables every supported provider for the current project and repairs older saved restrictions.
+The Providers tab stores API keys and selects the default `web_search` provider for all projects. Chat providers are chosen per role. Older `safety.allowed_providers` and `safety.projects` restrictions are ignored and dropped when configuration is saved.
 
-For DeepSeek-only trials, add a DeepSeek role, enable DeepSeek and disable the other chat providers. If OpenRouter is disabled, routing uses the enabled default role or the first enabled role. Disabled providers are excluded from classification and fallback.
+For DeepSeek-only trials, configure a single DeepSeek role or pin it with `/role <name>`. Automatic routing across multiple roles sends the prompt and recent context to OpenRouter.
 
 Saved keys override environment variables. Use the masked fields in Providers or set the matching variables.
 
@@ -97,7 +97,7 @@ Credentials live in a private 0600 configuration file, without encryption. Known
 
 ## Web search
 
-`web_search` uses Exa or Brave. Select the service in Providers, enable its project toggle and supply its key. The `search_provider` configuration field accepts `exa` or `brave`; older configurations default to Exa. There is no automatic fallback between services.
+`web_search` uses Exa or Brave. Pick the default service in Providers and supply its key. The `search_provider` configuration field accepts `exa` or `brave`; older configurations default to Exa. There is no automatic fallback between services.
 
 Search returns titles, URLs, dates when available and snippets. It defaults to five results and allows at most ten. `include_domains` and `exclude_domains` restrict results. Brave converts bare domains to search operators and limits the complete query to 600 characters and 75 words.
 

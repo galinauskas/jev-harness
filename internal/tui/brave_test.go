@@ -41,8 +41,4 @@ func TestBraveSettingsAndProviderChoice(t *testing.T) {
 	if err != nil || s.msgIsErr || s.mode != sList || loaded.SearchProvider != "brave" || loaded.BraveAPIKey != "new-brave-secret" {
 		t.Fatal("selection not saved", err, s.msg)
 	}
-	s.cfg.Safety.AllowedProviders = []string{"openrouter", "exa"}
-	if !strings.Contains(s.View(), "Disabled in settings") {
-		t.Fatal("blocked Brave key not indicated")
-	}
 }

@@ -252,10 +252,6 @@ func (a *Agent) ManualCompact(ctx context.Context) <-chan Event {
 		if !ok {
 			role, _ = a.cfg.RoleByName(a.cfg.DefaultRole)
 		}
-		if !a.cfg.ProviderAllowed(a.cwd, role.Backend()) {
-			a.send(ch, Event{Kind: Error, Text: "provider disabled; enable it in /settings → Providers"})
-			return
-		}
 		a.usedTokens, a.usedCost, a.costUnknown = 0, 0, false
 		a.persistenceErr = nil
 		threshold := a.cfg.CompactionThreshold

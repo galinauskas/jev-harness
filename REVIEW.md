@@ -1,5 +1,7 @@
 # Project review, 30 September 2026
 
+Follow-up, 2 October 2026: provider allowlists and project toggles have been removed. Chat routing uses configured roles and web search uses a global default provider. CLI doctor now reports the selected search provider and its key availability. The observations below describe the earlier reviewed revision.
+
 **Not recommended for use.** The current code has retained regression tests, staged file edits, reviewed apply and an optional offline Docker shell. The default local shell still has host filesystem and network access. This review does not establish live provider compatibility or a routing advantage.
 
 This update replaces the earlier review, whose Docker-default and screenshot descriptions no longer matched the project. Reviewed commit `8412bc9` and the current CLI, provider configuration, routing, search integration, execution policy, staged apply/recovery, session handling and TUI. This was a source review and local verification, not an independent security audit. No runtime behaviour was changed for this documentation update.

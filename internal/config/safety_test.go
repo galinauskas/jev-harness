@@ -5,14 +5,10 @@ import (
 	"testing"
 )
 
-func TestSafetyValidationAndProjectPolicy(t *testing.T) {
+func TestSafetyValidation(t *testing.T) {
 	cfg := Default()
 	if cfg.Safety.Mode != "develop" || cfg.Limits.OutputTokens != 8192 {
 		t.Fatal("defaults missing")
-	}
-	cfg.Safety.Projects = map[string][]string{"/project": {}}
-	if cfg.ProviderAllowed("/project", "openrouter") {
-		t.Fatal("empty project policy failed open")
 	}
 	cfg.Limits.Cost = math.NaN()
 	if cfg.Validate() == nil {

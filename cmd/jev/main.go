@@ -88,19 +88,15 @@ func main() {
 	if len(args) > 0 && args[0] == "doctor" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		fmt.Printf("Workspace: %s\nMode: %s; writes are staged\nProvider policy: auto routing sends prompt/recent context to OpenRouter\n", cwd, cfg.Safety.Mode)
+		fmt.Printf("Workspace: %s\nMode: %s; writes are staged\nRouting: auto routing sends prompt/recent context to OpenRouter\n", cwd, cfg.Safety.Mode)
 		for _, role := range cfg.Roles {
 			state := "key missing"
 			if cfg.ProviderKey(role.Backend()) != "" {
 				state = "key available"
 			}
-			fmt.Printf("%s: %s / %s (%s; permitted=%t)\n", role.Name, role.Backend(), role.Model, state, cfg.ProviderAllowed(cwd, role.Backend()))
+			fmt.Printf("%s: %s / %s (%s)\n", role.Name, role.Backend(), role.Model, state)
 		}
-		exaState := "key missing"
-		if cfg.ProviderKey("exa") != "" {
-			exaState = "key available"
-		}
-		fmt.Printf("Web search: exa (%s; permitted=%t)\n", exaState, cfg.ProviderAllowed(cwd, "exa"))
+		fmt.Printf("Web search: %s (%s)\n", cfg.WebSearchProvider(), cfg.WebSearchStatus())
 		if !cfg.Safety.DockerSandbox {
 			fmt.Println("Docker sandbox (experimental): off; shell runs locally with normal host and network access")
 			return
@@ -128,7 +124,7 @@ func main() {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
-		dec := r.RouteProject(ctx, cwd, router.State{Message: redact.New(cfg.APIKey, cfg.DeepSeekAPIKey, cfg.OpenCodeGoAPIKey, cfg.ExaAPIKey).Text(strings.Join(args[1:], " "))})
+		dec := r.Route(ctx, router.State{Message: redact.New(cfg.APIKey, cfg.DeepSeekAPIKey, cfg.OpenCodeGoAPIKey, cfg.ExaAPIKey).Text(strings.Join(args[1:], " "))})
 		out, _ := json.MarshalIndent(dec, "", "  ")
 		fmt.Println(string(out))
 		if dec.Err != nil {
