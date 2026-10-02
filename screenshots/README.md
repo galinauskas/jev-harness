@@ -2,7 +2,7 @@
 
 **Not recommended for use.** These captures document an experimental terminal agent. Local shell commands have host filesystem and network access. The optional Docker sandbox is experimental and off by default.
 
-All 30 PNGs were regenerated on 30 September 2026; provider settings and slash-command captures were refreshed on 2 October 2026. Captures use the TUI renderer. They are rendered interface fixtures, not recordings of live model sessions. Task text, routing choices, confidence, answers, command output and usage are demo data. No model or search provider requests were made. The diff and apply captures execute actual staged operations on disposable files.
+All 31 PNGs were regenerated on 2 October 2026 for `v0.2.0`. Captures use the TUI renderer. They are rendered interface fixtures, not recordings of live model sessions. Task text, routing choices, confidence, answers, command output and usage are demo data. No model or search provider requests were made. The diff and apply captures execute staged operations on disposable files.
 
 ## Current workflow
 
@@ -10,11 +10,17 @@ The Appearance tab shows the shell-backend setting and compact-output option.
 
 ![Appearance settings](09-settings-overview.png)
 
-The Providers tab includes Exa and Brave, a default search provider for all projects.
+The Providers tab selects Exa or Brave as the default `web_search` provider for all projects. Each chat role chooses its own provider.
 
 ![Provider settings](24-provider-settings.png)
 
 Slash-command output uses tables for results, confirmations and errors. Role and statistics tables adapt to narrow terminals, session rows retain keyboard selection, and diffs wrap without dropping review content.
+
+Mouse wheel and touchpad input scroll chat during a turn or tool approval. They also navigate settings, help and session pickers. This capture sends wheel events to the chat model and keeps the draft unchanged.
+
+![Transcript after wheel scrolling](30-wheel-scrolling.png)
+
+Jev also reports its agent state to Herdr and supplies a saved-session resume command when the Herdr version supports it. The [README](../README.md#herdr) describes setup and restore limits. These images do not show a live Herdr session.
 
 Local commands wait for approval in develop mode. Approval permits execution with normal host access.
 
@@ -64,6 +70,7 @@ An interrupted session blocks ordinary task submission until recovery acknowledg
 | [Staged changes](27-staged-changes.png) | File summary and full diff tables from a disposable edit |
 | [Reviewed apply](28-reviewed-apply.png) | Table confirming the actual apply result for that reviewed diff |
 | [Recovery](29-recovery.png) | Blocked task submission after interruption |
+| [Wheel scrolling](30-wheel-scrolling.png) | Earlier demo transcript rows after wheel events, with the draft preserved |
 
 ## Regenerate
 

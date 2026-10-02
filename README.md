@@ -1,6 +1,6 @@
 # Jev harness
 
-A terminal coding agent that asks Jev to choose a model role for each user turn. Roles map task descriptions to models on OpenRouter, direct DeepSeek or OpenCode Go. Replies stream into the terminal, and tool continuations stay on the selected model.
+A terminal coding agent that asks Jev to choose a model role for each user turn. Roles map task descriptions to models on OpenRouter, direct DeepSeek or OpenCode Go. Replies stream into the terminal, and tool continuations stay on the selected model. The current version is `v0.2.0`.
 
 **Not recommended for use.** This is an experimental project for disposable trials. Local shell commands have normal host filesystem and network access, even though they start in a staged copy. The optional Docker sandbox is experimental and off by default. Live provider compatibility and routing quality have not been established by this review.
 
@@ -12,13 +12,13 @@ The captures below use the current TUI renderer. Routing choices, replies and us
 
 ### Routing
 
-Jev chooses among the enabled roles using the current prompt and recent conversation. Below-threshold decisions use the default role. `/role <name>` pins a role; `/role auto` restores routing. A pinned role shows `pinned`, without an invented confidence score.
+Jev chooses among the configured roles using the current prompt and recent conversation. Below-threshold decisions use the default role. `/role <name>` pins a role; `/role auto` restores routing. A pinned role shows `pinned`, without an invented confidence score.
 
 ![Automatic routing, fallback and pinned roles](screenshots/routing-overview.png)
 
 ### Settings and search
 
-Settings now have Appearance, Routing, Context, Providers and Roles tabs. The Providers tab has project-specific provider toggles, masked key editors and an Exa or Brave search chooser. Disabling OpenRouter skips automatic classification and uses an enabled default role.
+Settings have Appearance, Routing, Context, Providers and Roles tabs. The Providers tab has masked key editors and a default `web_search` provider for all projects. Chat providers come from each role. A pinned role or a single configured role bypasses automatic classification.
 
 ![Provider settings with Brave selected](screenshots/24-provider-settings.png)
 
@@ -28,7 +28,7 @@ File tools edit a private copy. `/changes` shows the current diff, and `/apply` 
 
 ![Current staged diff](screenshots/27-staged-changes.png)
 
-The [full gallery](screenshots/README.md) includes approvals, command output, roles, session browsing, compaction, apply and recovery. All 30 images were regenerated on 30 September 2026; provider settings and slash-command captures were refreshed on 2 October 2026. The captures show interface behaviour, not measured model performance.
+The [full gallery](screenshots/README.md) includes approvals, command tables, session browsing, compaction, apply, recovery and wheel scrolling. All 31 images were regenerated on 2 October 2026 for `v0.2.0`. The captures show interface behaviour with demo data. They do not measure model performance.
 
 ## Build and trial
 
@@ -85,6 +85,8 @@ The integration sends only agent state, a generic block reason, session identity
 
 Enter submits a message. During an answer, Enter queues steering for the next model request, and Alt+Enter queues a follow-up after the turn. Shift+Enter inserts a newline. Escape cancels the current turn. Ctrl+C, SIGINT and SIGTERM request cancellation and save before exit.
 
+Mouse wheel and touchpad gestures scroll the transcript, including during streaming and tool approval. They also navigate settings, help and session pickers. PgUp/PgDn and Shift+Up/Down scroll chat from the keyboard.
+
 Use `@path` for an explicit attachment or `/attach` for paths with spaces. Attachments are limited to 64 KiB. `search_files` searches literal text or file globs and returns at most 100 matches. The agent reads a root `AGENTS.md` from the staged copy as repository guidance. That text cannot grant permissions. The agent does not automatically load executable project extensions, MCP configuration or package scripts.
 
 ## Configuration
@@ -121,7 +123,7 @@ Search returns titles, URLs, dates when available and snippets. It defaults to f
 
 Search works in inspect mode and does not need Docker. The host process sends the generated query and filters to the selected service over HTTPS. Search results are untrusted tool data. Search requests count toward the turn budget under `exa:web_search` or `brave:web_search`. Brave does not report a dollar cost per request; an enabled cost budget stops further requests once cost is unknown.
 
-CLI `doctor` currently reports Exa even when Brave is selected. Check the selected service in Providers until that diagnostic is fixed.
+CLI `doctor` reports the selected search provider and its key availability. Its routing description still says every setup sends prompts to OpenRouter, even when a single role bypasses classification. The [review](REVIEW.md) records that remaining diagnostic gap.
 
 ## Experimental Docker sandbox
 
@@ -176,7 +178,7 @@ Apply uses atomic replacements per file, but a multi-file apply is not one atomi
 
 ## Verification and routing evaluation
 
-The [review](REVIEW.md) records the checks run on 30 September 2026. The retained suite also runs in CI.
+The [review](REVIEW.md) records the source review and checks run on 2 October 2026 for `v0.2.0`. The retained suite also runs in CI.
 
 ```sh
 go test -race ./...
@@ -186,7 +188,7 @@ JEV_DOCKER_TEST=1 go test -v ./internal/tools -run '^TestLiveDocker'
 JEV_DOCKER_PROJECT_TEST=1 go test -v ./internal/tools -run '^TestLiveDockerProjectChecks$'
 ```
 
-Provider and search tests use local mock servers. They do not establish compatibility with live authenticated endpoints. The latest local checks passed the race suite and Docker isolation, failure/timeout and compact-output tests. They did not rerun the full project suite inside Docker or authenticated provider completions.
+Provider and search tests use local mock servers. They do not establish compatibility with live authenticated endpoints. The latest local checks passed the uncached race suite, `go vet`, module verification and build. Docker checks could not run because the local daemon was unavailable. Earlier Docker results are not fresh verification. Authenticated provider completions, billable search and routing evaluation were not run.
 
 To compare routed tasks with the configured default-role baseline, use the evaluation runner.
 

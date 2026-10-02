@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--font', default='/System/Library/Fonts/Menlo.ttc')
 parser.add_argument('--capture', action='append', help='Render only this capture stem (repeatable).')
-parser.add_argument('--date', default='30 September 2026', help='Capture date shown beneath each image.')
+parser.add_argument('--date', default='2 October 2026', help='Capture date shown beneath each image.')
 args = parser.parse_args()
 root = Path(__file__).resolve().parent
 font = ImageFont.truetype(args.font, 16)

@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"jevharness/internal/agent"
 	"jevharness/internal/config"
@@ -182,5 +184,22 @@ func TestShowcase(t *testing.T) {
 		c.ta.SetValue("Continue the task")
 		next, _ := c.submit()
 		*c = next
+	})
+	chat("30-wheel-scrolling", func(c *chatModel) {
+		var rows [][]string
+		for i := 1; i <= 40; i++ {
+			rows = append(rows, []string{fmt.Sprint(i), "Demo transcript entry. No command was executed."})
+		}
+		c.appendTranscript(c.commandTable("Demo transcript", []string{"Entry", "Text"}, rows))
+		c.vp.GotoBottom()
+		bottom := c.vp.YOffset()
+		c.ta.SetValue("Keep this draft while reviewing earlier output.")
+		for range 3 {
+			next, _ := c.Update(tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+			*c = next
+		}
+		if c.vp.YOffset() >= bottom || c.ta.Value() != "Keep this draft while reviewing earlier output." {
+			t.Fatal("wheel capture did not scroll or preserve the draft")
+		}
 	})
 }
