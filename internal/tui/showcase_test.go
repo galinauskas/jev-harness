@@ -119,9 +119,8 @@ func TestShowcase(t *testing.T) {
 		c.ta.SetValue("Inspect the retry loop first.\nKeep the current request ID on retries.\nPropose the edit before running a command.")
 	})
 	chat("16-yolo-mode", func(c *chatModel) {
-		_ = c.ag.SetMode("autonomous")
-		c.yolo = true
-		c.status = "Mode: autonomous; local shell retains host/network access"
+		next, _ := c.slash("/mode autonomous")
+		*c = next
 	})
 	chat("17-command-suggestions", func(c *chatModel) { c.ta.SetValue("/mo") })
 	chat("18-saved-sessions", func(c *chatModel) {

@@ -45,11 +45,17 @@ func changeDigest(changes []workspace.Change) string {
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
-func (c chatModel) safetyCommand(text string) (chatModel, tea.Cmd, bool) {
+func (c chatModel) safetyCommand(text string) (next chatModel, cmd tea.Cmd, handled bool) {
 	parts := strings.Fields(text)
 	if len(parts) == 0 {
 		return c, nil, false
 	}
+	c.status, c.statusIsErr = "", false
+	defer func() {
+		if handled {
+			next.commandFeedback(parts[0])
+		}
+	}()
 	fail := func(err error) (chatModel, tea.Cmd, bool) {
 		c.status, c.statusIsErr = err.Error(), true
 		return c, nil, true
@@ -163,14 +169,29 @@ func (c chatModel) safetyCommand(text string) (chatModel, tea.Cmd, bool) {
 				c.status = "No staged changes"
 			} else {
 				var preview strings.Builder
+				var rows [][]string
 				for _, change := range changes {
-					preview.WriteString(workspace.Preview(change))
+					kind := "Modified"
+					if change.Before == nil {
+						kind = "Added"
+					} else if change.After == nil {
+						kind = "Deleted"
+					}
+					rows = append(rows, []string{change.Path, kind})
+					preview.WriteString(c.commandTable(change.Path, []string{"Diff · original → staged"}, [][]string{{strings.TrimSuffix(workspace.Preview(change), "\n")}}))
+					if preview.Len() > 1<<20 {
+						c.reviewed = ""
+						return fail(fmt.Errorf("diff is too large to review at once; use /changes <path>"))
+					}
 				}
-				if preview.Len() > 1<<20 {
+				output := c.commandTable("Staged changes", []string{"File", "Change"}, rows) + preview.String()
+				// Leave room for the result table so transcript trimming cannot
+				// discard part of the review before granting /apply.
+				if len(output) > (1<<20)-4096 {
 					c.reviewed = ""
 					return fail(fmt.Errorf("diff is too large to review at once; use /changes <path>"))
 				}
-				c.appendTranscript(safeText(preview.String()))
+				c.appendTranscript(output)
 				c.status = fmt.Sprintf("%d changed files; /apply [path] applies reviewed changes", len(changes))
 			}
 			c.reviewed = digest
@@ -218,6 +239,7 @@ func (c chatModel) safetyCommand(text string) (chatModel, tea.Cmd, bool) {
 		c.ag.SetPersistence(c.snapshot())
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(c.cfg.Limits.Seconds)*time.Second)
 		c.cancel = cancel
+		c.commandRunning, c.commandReported = "/compact", false
 		c.events = c.ag.ManualCompact(ctx)
 		return c, tea.Batch(waitEvent(c.events), tick()), true
 	case "/name":

@@ -5,9 +5,6 @@ import (
 	"sort"
 	"strings"
 
-	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/table"
-
 	"jevharness/internal/openrouter"
 	"jevharness/internal/session"
 )
@@ -45,16 +42,11 @@ func (c *chatModel) recordUsage(model string, usage *openrouter.Usage) {
 
 func (c chatModel) sessionStats() string {
 	var b strings.Builder
-	b.WriteString("\n" + boldStyle.Render("Session stats") + "\n")
-	if c.sessionTitle != "" {
-		fmt.Fprintf(&b, "  %s\n", safeText(c.sessionTitle))
-	}
-	width := c.w - 4
-	if c.w <= 0 {
-		width = 100
-	}
-	width = max(1, width)
+	b.WriteString("\n" + c.commandHeading("Session stats") + "\n")
+
+	width := c.commandWidth()
 	summary := [][]string{
+		{"Title", c.sessionTitle},
 		{"Session ID", safeText(c.sessionID)},
 		{"Completed turns", fmt.Sprint(c.turns)},
 		{"Total tokens", fmt.Sprint(c.tokensIn + c.tokensOut)},
@@ -71,7 +63,7 @@ func (c chatModel) sessionStats() string {
 			summary = append(summary, []string{"Context usage", fmt.Sprintf("%.1f%% of %d", 100*float64(c.contextUsed)/float64(window), window)})
 		}
 	}
-	b.WriteString(renderStatsTable(width, []string{"Metric", "Value"}, summary, false) + "\n\n")
+	b.WriteString(renderCommandTable(width, []string{"Metric", "Value"}, summary, false) + "\n\n")
 	b.WriteString("  " + boldStyle.Render("Models used") + "\n")
 
 	names := make([]string, 0, len(c.models))
@@ -95,48 +87,27 @@ func (c chatModel) sessionStats() string {
 	}
 	if len(rows) > 0 {
 		if width >= 70 {
-			b.WriteString(renderStatsTable(width, []string{"Model", "Requests", "Input", "Output", "Reported cost"}, rows, true) + "\n")
+			b.WriteString(renderCommandTable(width, []string{"Model", "Requests", "Input", "Output", "Reported cost"}, rows, true) + "\n")
 		} else {
 			for _, row := range rows {
-				b.WriteString("  " + accent.Width(width).Render(row[0]) + "\n")
-				b.WriteString(renderStatsTable(width, []string{"Metric", "Value"}, [][]string{
+				b.WriteString(c.commandHeading(row[0]) + "\n")
+				b.WriteString(renderCommandTable(width, []string{"Metric", "Value"}, [][]string{
 					{"Reported requests", row[1]}, {"Input tokens", row[2]}, {"Output tokens", row[3]}, {"Reported cost", row[4]},
 				}, true) + "\n")
 			}
 		}
 	}
+	notes := make([][]string, 0, len(costNotes)+2)
 	for _, note := range costNotes {
-		b.WriteString("  " + dimStyle.Width(width).Render(note) + "\n")
+		notes = append(notes, []string{note})
 	}
 	if len(names) == 0 {
-		b.WriteString("    No model usage recorded.\n")
+		b.WriteString(renderCommandTable(width, []string{"Usage"}, [][]string{{"No model usage recorded."}}, false) + "\n")
 	}
 	if c.tokensIn > attributedIn || c.tokensOut > attributedOut || c.cost > attributedCost+0.000000001 {
-		b.WriteString("  Older usage totals have no per-model breakdown.\n")
+		notes = append(notes, []string{"Older usage totals have no per-model breakdown."})
 	}
-	b.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(dimStyle.Width(width).Render("Includes reported routing, chat, and compaction usage; unavailable usage is excluded.")) + "\n\n")
+	notes = append(notes, []string{"Includes reported routing, chat, and compaction usage; unavailable usage is excluded."})
+	b.WriteString(renderCommandTable(width, []string{"Accounting notes"}, notes, false) + "\n\n")
 	return b.String()
-}
-
-// renderStatsTable fits cells to the transcript width and aligns numeric columns.
-func renderStatsTable(width int, headers []string, rows [][]string, numeric bool) string {
-	t := table.New().
-		Headers(headers...).
-		Rows(rows...).
-		Border(lipgloss.RoundedBorder()).
-		BorderStyle(dimStyle).
-		StyleFunc(func(row, col int) lipgloss.Style {
-			style := lipgloss.NewStyle().Padding(0, 1)
-			if row == table.HeaderRow {
-				return style.Bold(true).Foreground(lipgloss.Color("81"))
-			}
-			if numeric && col > 0 {
-				return style.Align(lipgloss.Right)
-			}
-			return style
-		})
-	if lipgloss.Width(t.String()) > width {
-		t.Width(width)
-	}
-	return lipgloss.NewStyle().MarginLeft(2).Render(t.String())
 }

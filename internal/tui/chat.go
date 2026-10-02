@@ -77,6 +77,8 @@ type chatModel struct {
 	sessionList       []session.Session
 	sessionPicker     bool
 	sessionCursor     int
+	commandRunning    string
+	commandReported   bool
 	commandCursor     int
 	commandDismissed  bool
 	reviewed          string
@@ -212,8 +214,14 @@ func (c chatModel) Update(msg tea.Msg) (chatModel, tea.Cmd) {
 		if m.Err != nil {
 			c.status = m.Err.Error()
 		}
+		c.commandFeedback("/doctor")
 		return c, nil
 	case chanClosedMsg:
+		if c.commandRunning != "" && !c.commandReported {
+			c.status, c.statusIsErr = "No compaction needed; context unchanged", false
+			c.commandFeedback(c.commandRunning)
+		}
+		c.commandRunning, c.commandReported = "", false
 		c.events = nil
 		c.recovery = c.recovery || c.ag.PendingTool() != ""
 		if c.cancel != nil {

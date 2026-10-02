@@ -2,7 +2,7 @@
 
 **Not recommended for use.** These captures document an experimental terminal agent. Local shell commands have host filesystem and network access. The optional Docker sandbox is experimental and off by default.
 
-All 30 PNGs were regenerated on 30 September 2026; the provider settings and search picker were refreshed on 2 October 2026. Captures use the TUI renderer. They are rendered interface fixtures, not recordings of live model sessions. Task text, routing choices, confidence, answers, command output and usage are demo data. No model or search provider requests were made. The diff and apply captures execute actual staged operations on disposable files.
+All 30 PNGs were regenerated on 30 September 2026; provider settings and slash-command captures were refreshed on 2 October 2026. Captures use the TUI renderer. They are rendered interface fixtures, not recordings of live model sessions. Task text, routing choices, confidence, answers, command output and usage are demo data. No model or search provider requests were made. The diff and apply captures execute actual staged operations on disposable files.
 
 ## Current workflow
 
@@ -13,6 +13,8 @@ The Appearance tab shows the shell-backend setting and compact-output option.
 The Providers tab includes Exa and Brave, a default search provider for all projects.
 
 ![Provider settings](24-provider-settings.png)
+
+Slash-command output uses tables for results, confirmations and errors. Role and statistics tables adapt to narrow terminals, session rows retain keyboard selection, and diffs wrap without dropping review content.
 
 Local commands wait for approval in develop mode. Approval permits execution with normal host access.
 
@@ -40,7 +42,7 @@ An interrupted session blocks ordinary task submission until recovery acknowledg
 | [Pinned role](05-pinned-role.png) | Explicit role selection labelled pinned |
 | [Tool approval](06-tool-approval.png) | Yellow approval panel for a local shell request |
 | [Tool output](07-tool-output.png) | Demo command result and staged-change notice |
-| [Roles](08-roles-command.png) | Role criteria and model mappings |
+| [Roles](08-roles-command.png) | Role criteria, providers, model mappings and selection in a table |
 | [Appearance settings](09-settings-overview.png) | Docker off by default and standard command output |
 | [Edit a role](10-edit-role-criteria.png) | Criteria, model and provider fields |
 | [Add a role](11-add-role.png) | A draft research role with DeepSeek selected |
@@ -50,7 +52,7 @@ An interrupted session blocks ordinary task submission until recovery acknowledg
 | [Multiline input](15-multiline-input.png) | A message draft with horizontal input rules |
 | [Autonomous mode](16-yolo-mode.png) | Automatic tool approval with a visible mode badge |
 | [Command suggestions](17-command-suggestions.png) | Slash-command filtering and completion |
-| [Saved sessions](18-saved-sessions.png) | Two illustrative saved conversations |
+| [Saved sessions](18-saved-sessions.png) | A selectable table of saved conversations |
 | [Session stats](19-session-stats.png) | Demo reported usage and unavailable Brave cost |
 | [Context settings](20-context-settings.png) | Compaction threshold |
 | [Context compaction](21-context-compaction.png) | A demo summary notice |
@@ -59,8 +61,8 @@ An interrupted session blocks ordinary task submission until recovery acknowledg
 | [Provider settings](24-provider-settings.png) | API keys and the default web_search provider, with Brave selected |
 | [Search provider chooser](25-search-provider.png) | Exa and Brave choices |
 | [Compact command output](26-compact-command-output.png) | Compact output enabled in Appearance |
-| [Staged changes](27-staged-changes.png) | Actual diff from a disposable file edit |
-| [Reviewed apply](28-reviewed-apply.png) | Actual apply result for that reviewed diff |
+| [Staged changes](27-staged-changes.png) | File summary and full diff tables from a disposable edit |
+| [Reviewed apply](28-reviewed-apply.png) | Table confirming the actual apply result for that reviewed diff |
 | [Recovery](29-recovery.png) | Blocked task submission after interruption |
 
 ## Regenerate

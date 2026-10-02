@@ -28,7 +28,7 @@ File tools edit a private copy. `/changes` shows the current diff, and `/apply` 
 
 ![Current staged diff](screenshots/27-staged-changes.png)
 
-The [full gallery](screenshots/README.md) includes approvals, command output, roles, session browsing, compaction, apply and recovery. All 30 images were regenerated on 30 September 2026; provider settings and the search picker were refreshed on 2 October 2026. The captures show interface behaviour, not measured model performance.
+The [full gallery](screenshots/README.md) includes approvals, command output, roles, session browsing, compaction, apply and recovery. All 30 images were regenerated on 30 September 2026; provider settings and slash-command captures were refreshed on 2 October 2026. The captures show interface behaviour, not measured model performance.
 
 ## Build and trial
 
@@ -72,6 +72,8 @@ Enter submits a message. During an answer, Enter queues steering for the next mo
 Use `@path` for an explicit attachment or `/attach` for paths with spaces. Attachments are limited to 64 KiB. `search_files` searches literal text or file globs and returns at most 100 matches. The agent reads a root `AGENTS.md` from the staged copy as repository guidance. That text cannot grant permissions. The agent does not automatically load executable project extensions, MCP configuration or package scripts.
 
 ## Configuration
+
+Slash-command results appear in bordered tables, including roles, session statistics, saved sessions, diagnostics, command confirmations and errors. `/changes` shows a file summary and full wrapped diff tables; oversized reviews still require selecting a path.
 
 Open `/settings` with Ctrl+O. Use Left/Right to switch tabs, Up/Down to select rows, and Enter or Space to edit or toggle. Tab moves between sections, or between rows on a page with one section. The help line describes the selected setting. Press `?` for shortcuts.
 

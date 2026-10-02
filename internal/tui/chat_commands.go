@@ -3,7 +3,6 @@ package tui
 import (
 	tea "charm.land/bubbletea/v2"
 	"fmt"
-	"github.com/charmbracelet/x/ansi"
 	"strings"
 )
 
@@ -12,7 +11,16 @@ func (c chatModel) slash(text string) (chatModel, tea.Cmd) {
 	if next, cmd, handled := c.safetyCommand(text); handled {
 		return next, cmd
 	}
+	c.status, c.statusIsErr = "", false
+	return c.slashResult(text)
+}
+
+func (c chatModel) slashResult(text string) (next chatModel, cmd tea.Cmd) {
 	parts := strings.Fields(text)
+	if len(parts) == 0 {
+		return c, nil
+	}
+	defer func() { next.commandFeedback(parts[0]) }()
 	switch parts[0] {
 	case "/settings":
 		return c, func() tea.Msg { return openSettingsMsg{} }
@@ -34,7 +42,7 @@ func (c chatModel) slash(text string) (chatModel, tea.Cmd) {
 			return c.newSession()
 		}
 		if len(parts) != 1 {
-			c.status, c.statusIsErr = "usage: /session [new|stats]", true
+			c.status, c.statusIsErr = "usage: /session [new|stats|search <text>|delete <id>|export <path>]", true
 			return c, nil
 		}
 		if !c.saveSession() {
@@ -51,12 +59,13 @@ func (c chatModel) slash(text string) (chatModel, tea.Cmd) {
 		return c.newSession()
 	case "/role":
 		if len(parts) < 2 {
-			c.status = "usage: /role <name>|auto"
+			c.status, c.statusIsErr = "usage: /role <name>|auto", true
 			return c, nil
 		}
 		if parts[1] == "auto" {
 			c.ag.Pinned = ""
 			c.lastDec = nil
+			c.status = "Automatic role routing enabled"
 			return c, c.requestContext()
 		}
 		if _, ok := c.cfg.RoleByName(parts[1]); !ok {
@@ -65,24 +74,10 @@ func (c chatModel) slash(text string) (chatModel, tea.Cmd) {
 			return c, nil
 		}
 		c.ag.Pinned = parts[1]
+		c.status = "Pinned role: " + parts[1]
 		return c, c.requestContext()
-	case "/yolo":
-		c.yolo = !c.yolo
-		return c, nil
 	case "/roles":
-		var b strings.Builder
-		b.WriteString(dimStyle.Render("roles:") + "\n")
-		width := max(12, c.vp.Width()-4)
-		for _, r := range c.cfg.Roles {
-			star := "  "
-			if r.Name == c.cfg.DefaultRole {
-				star = "★ "
-			}
-			fmt.Fprintf(&b, "  %s%s  %s\n", star, safeText(r.Name),
-				accent.Render(ansi.Truncate(safeText(r.Model), max(8, width-len(r.Name)-6), "…")))
-			fmt.Fprintf(&b, "    %s\n", dimStyle.Render(ansi.Truncate(safeText(r.Description), width, "…")))
-		}
-		c.appendTranscript(b.String())
+		c.appendTranscript(c.rolesTable())
 		return c, nil
 	default:
 		c.status = fmt.Sprintf("unknown command %q", parts[0])

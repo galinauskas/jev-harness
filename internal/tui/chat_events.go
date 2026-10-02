@@ -30,9 +30,21 @@ func (c chatModel) handleEvent(ev agent.Event) (chatModel, tea.Cmd) {
 		c.status = "Compacting context…"
 	case agent.Compacted:
 		c.status = ""
-		c.appendTranscript("\n" + padText(dimStyle.Render(safeText(ev.Text)), c.w) + "\n")
+		if c.commandRunning != "" {
+			c.status, c.statusIsErr = ev.Text, false
+			c.commandFeedback(c.commandRunning)
+			c.commandReported = true
+		} else {
+			c.appendTranscript("\n" + padText(dimStyle.Render(safeText(ev.Text)), c.w) + "\n")
+		}
 	case agent.CompactionWarning:
-		c.appendTranscript("\n" + padText(warnStyle.Render(safeText(ev.Text)), c.w) + "\n")
+		if c.commandRunning != "" {
+			c.status, c.statusIsErr = ev.Text, false
+			c.commandFeedback(c.commandRunning)
+			c.commandReported = true
+		} else {
+			c.appendTranscript("\n" + padText(warnStyle.Render(safeText(ev.Text)), c.w) + "\n")
+		}
 	case agent.TextDelta:
 		c.pending.WriteString(ev.Text)
 	case agent.ToolOutput:
@@ -87,7 +99,13 @@ func (c chatModel) handleEvent(ev agent.Event) (chatModel, tea.Cmd) {
 			c.appendTranscript(padText(dimStyle.Render(c.pendingTool), c.w))
 			c.pendingTool = ""
 		}
-		c.appendTranscript(padText(errStyle.Render("✗ "+safeText(ev.Text)), c.w))
+		if c.commandRunning != "" {
+			c.status, c.statusIsErr = ev.Text, true
+			c.commandFeedback(c.commandRunning)
+			c.commandReported = true
+		} else {
+			c.appendTranscript(padText(errStyle.Render("✗ "+safeText(ev.Text)), c.w))
+		}
 		c.status = ""
 	}
 	return c, next

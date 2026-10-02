@@ -1,10 +1,10 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"jevharness/internal/router"
 )
@@ -70,7 +70,12 @@ func (c chatModel) newSession() (chatModel, tea.Cmd) {
 	return c, c.requestContext()
 }
 
-func (c chatModel) sessionKey(m tea.KeyPressMsg) (chatModel, tea.Cmd) {
+func (c chatModel) sessionKey(m tea.KeyPressMsg) (next chatModel, cmd tea.Cmd) {
+	defer func() {
+		if m.String() == "enter" && !next.sessionPicker {
+			next.commandFeedback("/session")
+		}
+	}()
 	switch m.String() {
 	case "esc":
 		c.sessionPicker, c.sessionList = false, nil
@@ -132,38 +137,50 @@ func (c chatModel) sessionKey(m tea.KeyPressMsg) (chatModel, tea.Cmd) {
 }
 
 func (c chatModel) sessionsView() string {
-	width := max(1, c.w-2)
-	rows := max(1, c.h-6)
-	start := max(0, c.sessionCursor-rows+1)
-	var b strings.Builder
-	b.WriteString(" " + boldStyle.Render("Sessions") + "\n")
-	b.WriteString(" " + dimStyle.Render(ansi.Truncate(safeText(c.cwd), width, "…")) + "\n\n")
-	for i := start; i <= len(c.sessionList) && i < start+rows; i++ {
-		label := "New session"
+	width := c.commandWidth()
+	// Each picker row stays on one line so selection and scrolling agree.
+	limit := max(1, c.h-9)
+	errorOutput := ""
+	if c.statusIsErr {
+		errorOutput = renderCommandTable(width, []string{"Error"}, [][]string{{c.status}}, false)
+		limit = max(1, limit-lipgloss.Height(errorOutput))
+	}
+	start := max(0, c.sessionCursor-limit+1)
+	var rows [][]string
+	for i := start; i <= len(c.sessionList) && i < start+limit; i++ {
+		title, updated, state := "New session", "—", ""
 		if i > 0 {
 			v := c.sessionList[i-1]
-			marker := ""
+			title = strings.Join(strings.Fields(safeText(v.Title)), " ")
+			updated = v.Updated.Local().Format("Jan 02 15:04")
 			if v.ID == c.sessionID {
-				marker = " · current"
+				state = "Current"
 			}
-			label = fmt.Sprintf("%s · %s%s", v.Updated.Local().Format("Jan 02 15:04"), safeText(v.Title), marker)
+		} else if len(c.sessionList) == 0 {
+			state = "No saved sessions"
 		}
-		prefix := "  "
+		marker := "  "
 		if i == c.sessionCursor {
-			prefix = "› "
+			marker = "› "
 		}
-		line := ansi.Truncate(prefix+label, width, "…")
-		if i == c.sessionCursor {
-			line = accent.Render(line)
-		}
-		b.WriteString(" " + line + "\n")
+		rows = append(rows, []string{marker + title, updated, state})
 	}
-	if len(c.sessionList) == 0 {
-		b.WriteString(" " + dimStyle.Render("No saved sessions in this directory yet.") + "\n")
+	t := newCommandTable(width, []string{"Session", "Updated", "State"}, rows, false).
+		Width(width).Wrap(false).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			style := commandCellStyle(row, col, false)
+			if row == c.sessionCursor-start {
+				return style.Foreground(lipgloss.Color("255")).Background(lipgloss.Color("31")).Bold(true)
+			}
+			return style
+		})
+	var b strings.Builder
+	b.WriteString("  " + boldStyle.Render("Sessions") + "\n")
+	b.WriteString("  " + dimStyle.Render(ansi.Truncate(safeText(c.cwd), width, "…")) + "\n\n")
+	b.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(t.String()) + "\n")
+	if errorOutput != "" {
+		b.WriteString(errorOutput + "\n")
 	}
-	if c.statusIsErr {
-		b.WriteString(" " + errStyle.Render(ansi.Truncate(safeText(c.status), width, "…")) + "\n")
-	}
-	b.WriteString("\n " + dimStyle.Render(ansi.Truncate("↑/↓ select · Enter open · Esc back", width, "…")))
+	b.WriteString("\n  " + dimStyle.Render(ansi.Truncate("↑/↓ select · Enter open · Esc back", width, "…")))
 	return b.String()
 }
